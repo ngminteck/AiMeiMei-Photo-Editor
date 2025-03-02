@@ -43,7 +43,7 @@ class MainWindow(QWidget):
         layout.addWidget(self.apply_merge_button)
 
         self.setLayout(layout)
-        self.setWindowTitle("SAM: Merged Selection, Transformation & Apply Tool")
-        self.resize(800, 600)
+        self.setWindowTitle("AiMeiMei Photo Editor")
+        self.resize(1920, 1080)
         # Update the image path if needed.
         self.view.load_image("images/test/2_people_together.png")
