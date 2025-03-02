@@ -21,7 +21,7 @@ class CustomGraphicsView(QGraphicsView):
         self.dragging = False
 
         # Modes: "selection" (prompt-based), "auto" (auto-based), "transform" (move/scale)
-        self.mode = "selection"
+        self.mode = "transform"  # Default mode is transform.
 
         # For prompt-based mode: store positive/negative points
         self.positive_points = []
@@ -65,9 +65,10 @@ class CustomGraphicsView(QGraphicsView):
             self.cv_image_small = cv2.resize(self.cv_image, (0, 0), fx=self.downscale_factor, fy=self.downscale_factor)
             self.image_rgb_small = cv2.cvtColor(self.cv_image_small, cv2.COLOR_BGR2RGB)
 
-            # Generate and cache auto masks on the downscaled image.
-            with torch.no_grad():
-                self.cached_masks = SAMModelProvider.get_auto_mask_generator().generate(self.image_rgb_small)
+            # Only generate auto masks if mode is not transform.
+            if self.mode != "transform":
+                with torch.no_grad():
+                    self.cached_masks = SAMModelProvider.get_auto_mask_generator().generate(self.image_rgb_small)
         else:
             print("Error loading image with cv2")
             return
@@ -82,6 +83,11 @@ class CustomGraphicsView(QGraphicsView):
         if mode != "selection":
             self.positive_points = []
             self.negative_points = []
+        # If switching to a mode that requires the model (selection or auto) and masks haven't been generated,
+        # trigger auto mask generation.
+        if mode != "transform" and self.cv_image is not None and self.cached_masks is None:
+            with torch.no_grad():
+                self.cached_masks = SAMModelProvider.get_auto_mask_generator().generate(self.image_rgb_small)
 
     # --- Prompt-based selection ---
     def ai_salient_object_selection(self):
