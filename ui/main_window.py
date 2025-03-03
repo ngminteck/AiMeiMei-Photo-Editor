@@ -1,7 +1,8 @@
 # ui/main_window.py
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QPushButton, QGraphicsView, QGraphicsScene, QFileDialog,
-                             QMenuBar, QMenu, QMessageBox)
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton, QFileDialog, QMenuBar, QMessageBox, QPlainTextEdit, QLabel
+)
 from PyQt6.QtCore import Qt, QRect
 from PyQt6.QtGui import QScreen, QPixmap, QPainter, QAction
 from .custom_graphics_view import CustomGraphicsView
@@ -11,33 +12,86 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.current_file = None
+        self.mode_buttons = {}  # To store mode buttons
         self.initUI()
 
     def initUI(self):
         self.setWindowTitle('Image Editor')
 
-        # Create central widget and layout
+        # Create the main central widget and its layout (vertical)
         central_widget = QWidget()
-        layout = QVBoxLayout(central_widget)
+        main_layout = QVBoxLayout(central_widget)
 
-        # Create CustomGraphicsView
+        # --- Top area layout: left (buttons), center (image view), right (layer info) ---
+        top_layout = QHBoxLayout()
+
+        # Left Panel: Buttons
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        # Mode buttons mapping: button text -> mode string.
+        mode_map = {
+            "Transform": "transform",
+            "Prompt": "selection",
+            "Auto": "auto"
+        }
+        for text, mode in mode_map.items():
+            btn = QPushButton(text)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            left_layout.addWidget(btn)
+            btn.clicked.connect(lambda checked, m=mode: self.set_mode_action(m))
+            self.mode_buttons[mode] = btn
+
+        # Add the Apply button as well
+        apply_button = QPushButton("Apply")
+        apply_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        left_layout.addWidget(apply_button)
+        apply_button.clicked.connect(self.apply_action)
+        left_layout.addStretch(1)  # Push buttons to the top
+
+        # Center Panel: Image view (CustomGraphicsView)
         self.view = CustomGraphicsView()
-        layout.addWidget(self.view, 1)  # Give it more vertical space
 
-        # Create buttons
-        buttons = ['Transform', 'Prompt', 'Auto', 'Apply']
-        for button_text in buttons:
-            button = QPushButton(button_text)
-            layout.addWidget(button)
-            button.clicked.connect(getattr(self, f"{button_text.lower()}_action"))
+        # Right Panel: Layer Info placeholder (using a QPlainTextEdit)
+        self.layer_info = QPlainTextEdit()
+        self.layer_info.setReadOnly(True)
+        self.layer_info.setPlaceholderText("Layer info will be shown here")
+        self.layer_info.setMaximumWidth(200)  # Limit the width to 200 pixels
+
+        # Add left, center, right panels to the top layout.
+        # Adjust stretch factors as needed.
+        top_layout.addWidget(left_panel, 1)
+        top_layout.addWidget(self.view, 4)
+        top_layout.addWidget(self.layer_info, 2)
+
+        # --- Bottom area: Directory Info ---
+        self.directory_info = QLabel("Directory Info: ")
+
+        # Add the top layout and the directory info widget to the main layout.
+        main_layout.addLayout(top_layout)
+        main_layout.addWidget(self.directory_info)
 
         self.setCentralWidget(central_widget)
 
-        # Create menu bar
+        # Create menu bar.
         self.create_menu_bar()
 
-        # Set window size based on screen
+        # Set window size based on screen.
         self.adjustSize()
+
+        # Set default mode to "transform" and update button style.
+        self.set_mode_action("transform")
+
+    def set_mode_action(self, mode):
+        self.view.set_mode(mode)
+        self.update_active_button(mode)
+
+    def update_active_button(self, active_mode):
+        # Update style for each mode button.
+        for mode, btn in self.mode_buttons.items():
+            if mode == active_mode:
+                btn.setStyleSheet("background-color: #87CEFA;")  # Light blue for active.
+            else:
+                btn.setStyleSheet("")
 
     def create_menu_bar(self):
         menubar = self.menuBar()
@@ -57,8 +111,8 @@ class MainWindow(QMainWindow):
 
     def adjustSize(self):
         screen = QApplication.primaryScreen().availableGeometry()
-        width = int(screen.width() * 0.6)  # 60% of screen width
-        height = int(screen.height() * 0.8)  # 80% of screen height
+        width = int(screen.width() * 0.6)  # 60% of screen width.
+        height = int(screen.height() * 0.8)  # 80% of screen height.
         self.setGeometry(QRect(0, 0, width, height))
         self.center()
 
@@ -74,6 +128,8 @@ class MainWindow(QMainWindow):
         if image_file:
             self.view.load_image(image_file)
             self.current_file = image_file
+            # Update directory info when an image is opened.
+            self.directory_info.setText(f"Directory Info: {image_file}")
 
     def save_image(self):
         if self.current_file:
@@ -86,104 +142,8 @@ class MainWindow(QMainWindow):
         file_dialog = QFileDialog()
         file_path, _ = file_dialog.getSaveFileName(self, "Save Image As", "", "Image Files (*.png *.jpg *.bmp)")
         if file_path:
-                self.view.save(file_path)
-
-    def transform_action(self):
-        self.view.set_mode("transform")
-
-    def prompt_action(self):
-       self.view.set_mode("selection")
-
-    def auto_action(self):
-       self.view.set_mode("auto")
+            self.view.save(file_path)
 
     def apply_action(self):
         self.view.apply_merge()
 
-'''
-class MainWindow(QtWidgets.QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.init_ui()
-
-    def init_ui(self):
-        layout = QVBoxLayout()
-        self.view = CustomGraphicsView()
-        self.filepath = None
-        # Rearranged button order: Transform button appears first.
-        self.transform_button = QPushButton("Transform Mode")
-        self.transform_button.setCheckable(True)
-        self.prompt_selection_button = QPushButton("Prompt Selection Mode")
-        self.prompt_selection_button.setCheckable(True)
-        self.auto_selection_button = QPushButton("Auto Selection Mode")
-        self.auto_selection_button.setCheckable(True)
-
-        # Set default mode to transform so that no model is loaded at startup.
-        self.transform_button.setChecked(True)
-        self.prompt_selection_button.setChecked(False)
-        self.auto_selection_button.setChecked(False)
-
-        # Initialize the view with transform mode.
-        self.view.set_mode("transform")
-
-        button_group = QButtonGroup(self)
-        button_group.setExclusive(True)
-        button_group.addButton(self.transform_button)
-        button_group.addButton(self.prompt_selection_button)
-        button_group.addButton(self.auto_selection_button)
-
-        self.transform_button.clicked.connect(lambda: self.view.set_mode("transform"))
-        self.prompt_selection_button.clicked.connect(lambda: self.view.set_mode("selection"))
-        self.auto_selection_button.clicked.connect(lambda: self.view.set_mode("auto"))
-
-        self.apply_merge_button = QPushButton("Apply Merge")
-        self.apply_merge_button.clicked.connect(lambda: self.view.apply_merge())
-
-        # Add widgets to layout; transform button is now at the top.
-        #self.layout().addChildWidget(button_group)      
-        self.layout().add
-        self.setWindowTitle("AiMeiMei Photo Editor")
-        self.resize(1920, 1080)
-        self.createMenu()
-        # Update the image path if needed.
-
-    def createMenu(self):
-        menubar = self.menuBar()
-        fileMenu = menubar.addMenu("&File")
-
-        openAction = QAction("&Open File", self)
-        openAction.setShortcut("Ctrl+O")
-        openAction.triggered.connect(self.OnOpen)
-        fileMenu.addAction(openAction)
-
-        saveAction = QAction("&Save File", self)
-        saveAction.setShortcut("Ctrl+S")
-        saveAction.triggered.connect(self.OnSave)
-        fileMenu.addAction(saveAction)
-
-        saveAsAction = QAction("&Save File As", self)
-        saveAsAction.setShortcut("Ctrl+Shift+S")
-        saveAsAction.triggered.connect(self.OnSaveAs)
-        fileMenu.addAction(saveAsAction)
-       
-
-    def OnOpen(self):
-        # Load an image file to be displayed (will popup a file dialog).
-        self.filepath, dummy = QFileDialog.getOpenFileName(self, "Open image file.")
-        if len(self.filepath) and os.path.isfile(self.filepath):
-            self.view.load_image(self.filepath)
-       
-    def OnSave(self):
-       self.view.save()
-
-    def OnSaveAs(self):
-        name, ext = os.path.splitext(self.image_viewer._current_filename)
-        dialog = QFileDialog()
-        dialog.setDefaultSuffix("png")
-        extension_filter = "Default (*.png);;BMP (*.bmp);;Icon (*.ico);;JPEG (*.jpeg *.jpg);;PBM (*.pbm);;PGM (*.pgm);;PNG (*.png);;PPM (*.ppm);;TIF (*.tif *.tiff);;WBMP (*.wbmp);;XBM (*.xbm);;XPM (*.xpm)"
-        name = dialog.getSaveFileName(self, 'Save File', name + ".png", extension_filter)
-        print("The saved file name is : ",name[0])
-        self.view.save(name[0])
-        self.filepath = name[0]
-
-'''

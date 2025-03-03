@@ -2,10 +2,11 @@
 import cv2
 import numpy as np
 import torch
-from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem,QSizePolicy
-from PyQt6.QtGui import QPixmap, QPen, QColor, QPainter, QImage, QPainterPath
+from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QSizePolicy
+from PyQt6.QtGui import QPixmap, QPen, QColor, QPainter, QImage, QPainterPath, QBrush
 from PyQt6.QtCore import Qt
 from providers.sam_model_provider import SAMModelProvider
+
 
 class CustomGraphicsView(QGraphicsView):
     def __init__(self):
@@ -47,36 +48,89 @@ class CustomGraphicsView(QGraphicsView):
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
+        # For checkerboard background: cache the tile pixmap.
+        self.checkerboard_pixmap = None
+
+    def drawBackground(self, painter, rect):
+        # Use the main image's bounding rect if available,
+        # so the checkerboard is drawn only behind the image.
+        if self.main_pixmap_item:
+            image_rect = self.main_pixmap_item.boundingRect()
+        else:
+            image_rect = rect
+
+        # Compute dynamic tile size based on image size.
+        # Here, tile size is 1/40th of the smallest dimension with a minimum of 20 pixels.
+        tile_size = max(20, int(min(image_rect.width(), image_rect.height()) / 40))
+
+        # Recreate the checkerboard tile if needed.
+        if self.checkerboard_pixmap is None or self.checkerboard_pixmap.width() != tile_size:
+            self.checkerboard_pixmap = QPixmap(tile_size, tile_size)
+            self.checkerboard_pixmap.fill(Qt.GlobalColor.white)
+            tile_painter = QPainter(self.checkerboard_pixmap)
+            tile_painter.fillRect(0, 0, tile_size // 2, tile_size // 2, Qt.GlobalColor.lightGray)
+            tile_painter.fillRect(tile_size // 2, tile_size // 2, tile_size // 2, tile_size // 2,
+                                  Qt.GlobalColor.lightGray)
+            tile_painter.end()
+
+        brush = QBrush(self.checkerboard_pixmap)
+        painter.fillRect(image_rect, brush)
+
     def save(self, filepath=None):
         if filepath:
             self.main_pixmap_item.pixmap().save(filepath, None, 100)
 
     def load_image(self, image_path):
+        # Clear the scene and reset state.
+        self.scene.clear()
+        self.main_pixmap_item = None
+        self.selected_pixmap_item = None
+        self.selection_feedback_item = None
+        self.positive_points = []
+        self.negative_points = []
+        self.cached_masks = None
+
         self.image_path = image_path
-        self.original_pixmap = QPixmap(image_path)
-        self.background_pixmap = QPixmap(image_path)
-        if self.original_pixmap.isNull():
+
+        # Load the image with OpenCV (using IMREAD_UNCHANGED to preserve alpha if available).
+        self.cv_image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+        if self.cv_image is None:
             print(f"Error: Could not load image from {image_path}")
             return
 
-        # Load full-resolution image with cv2.
-        self.cv_image = cv2.imread(image_path)
-        if self.cv_image is not None:
-            self.image_shape = (self.cv_image.shape[0], self.cv_image.shape[1])
-            self.auto_selection_mask = np.zeros(self.image_shape, dtype=np.uint8)
+        # If file is not a PNG, convert it in memory to PNG.
+        if not image_path.lower().endswith('.png'):
+            ret, buf = cv2.imencode('.png', self.cv_image)
+            if ret:
+                png_bytes = buf.tobytes()
+                self.original_pixmap = QPixmap()
+                self.original_pixmap.loadFromData(png_bytes, "PNG")
+            else:
+                print("Error: Could not encode image as PNG.")
+                return
+        else:
+            self.original_pixmap = QPixmap(image_path)
 
-            # Create a downscaled version to speed up auto mask generation.
-            self.cv_image_small = cv2.resize(self.cv_image, (0, 0), fx=self.downscale_factor, fy=self.downscale_factor)
+        # Store a copy for background.
+        self.background_pixmap = self.original_pixmap.copy()
+
+        self.image_shape = (self.cv_image.shape[0], self.cv_image.shape[1])
+        self.auto_selection_mask = np.zeros(self.image_shape, dtype=np.uint8)
+
+        # Create a downscaled version to speed up auto mask generation.
+        self.cv_image_small = cv2.resize(self.cv_image, (0, 0), fx=self.downscale_factor, fy=self.downscale_factor)
+        # Convert color depending on whether the image has an alpha channel.
+        if self.cv_image_small.shape[2] == 4:
+            self.image_rgb_small = cv2.cvtColor(self.cv_image_small, cv2.COLOR_BGRA2RGB)
+        else:
             self.image_rgb_small = cv2.cvtColor(self.cv_image_small, cv2.COLOR_BGR2RGB)
 
-            # Only generate auto masks if mode is not transform.
-            if self.mode != "transform":
-                with torch.no_grad():
-                    self.cached_masks = SAMModelProvider.get_auto_mask_generator().generate(self.image_rgb_small)
-        else:
-            print("Error loading image with cv2")
-            return
+        # Only generate auto masks if mode is not transform.
+        if self.mode != "transform":
+            with torch.no_grad():
+                self.cached_masks = SAMModelProvider.get_auto_mask_generator().generate(self.image_rgb_small)
 
+        # Create a new main_pixmap_item and add it to the scene.
         self.main_pixmap_item = QGraphicsPixmapItem(self.original_pixmap)
         self.scene.addItem(self.main_pixmap_item)
         self.setSceneRect(self.main_pixmap_item.boundingRect())
