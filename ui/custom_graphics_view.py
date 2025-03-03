@@ -2,10 +2,9 @@
 import cv2
 import numpy as np
 import torch
-from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
+from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem,QSizePolicy
 from PyQt6.QtGui import QPixmap, QPen, QColor, QPainter, QImage, QPainterPath
 from PyQt6.QtCore import Qt
-
 from providers.sam_model_provider import SAMModelProvider
 
 class CustomGraphicsView(QGraphicsView):
@@ -37,7 +36,7 @@ class CustomGraphicsView(QGraphicsView):
         self.downscale_factor = 0.5  # Adjust factor as needed.
         self.cv_image_small = None  # Downscaled version.
         self.image_rgb_small = None
-
+        self.aspectRatioMode = Qt.AspectRatioMode.KeepAspectRatio
         # Cache auto masks computed on the downscaled image.
         self.cached_masks = None
 
@@ -46,6 +45,11 @@ class CustomGraphicsView(QGraphicsView):
 
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+    def save(self, filepath=None):
+        if filepath:
+            self.main_pixmap_item.pixmap().save(filepath, None, 100)
 
     def load_image(self, image_path):
         self.image_path = image_path
@@ -76,6 +80,7 @@ class CustomGraphicsView(QGraphicsView):
         self.main_pixmap_item = QGraphicsPixmapItem(self.original_pixmap)
         self.scene.addItem(self.main_pixmap_item)
         self.setSceneRect(self.main_pixmap_item.boundingRect())
+        self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def set_mode(self, mode):
         self.mode = mode
