@@ -1,29 +1,36 @@
+import os
+import shutil
+import glob
+import uuid
+import cv2
+import numpy as np
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QFileDialog, QMenuBar, QMessageBox, QLabel, QTextEdit, QScrollArea
+    QPushButton, QFileDialog, QMenuBar, QMessageBox, QLabel, QTextEdit, QListWidget, QListWidgetItem
 )
-from PyQt6.QtCore import Qt, QRect
-from PyQt6.QtGui import QScreen, QPixmap, QAction
-from .custom_graphics_view import CustomGraphicsView
-from providers.controlnet_model_provider import load_controlnet, make_divisible_by_8
-import cv2
+from PyQt6.QtCore import Qt, QRect, QSize
+from PyQt6.QtGui import QScreen, QPixmap, QAction, QIcon
 from PIL import Image
 from PIL.ImageQt import ImageQt
-import glob
-import os
-import numpy as np
+from .custom_graphics_view import CustomGraphicsView
+from providers.controlnet_model_provider import load_controlnet, make_divisible_by_8
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.current_file = None
         self.mode_buttons = {}  # To store mode buttons
+
+        # Ensure the reference images directory exists.
+        self.reference_dir = "images/reference_images"
+        os.makedirs(self.reference_dir, exist_ok=True)
+
         self.initUI()
 
     def initUI(self):
         self.setWindowTitle("Image Editor")
 
-        # Main vertical layout for the window.
+        # Main vertical layout.
         central_widget = QWidget()
         main_layout = QVBoxLayout(central_widget)
 
@@ -32,7 +39,6 @@ class MainWindow(QMainWindow):
         # ---------------------------
         top_widget = QWidget()
         top_layout = QHBoxLayout(top_widget)
-        # Display the current image aesthetic score and related info.
         score_label = QLabel("Aesthetic Score: 85 | Position: Good | Angle: Optimal | Brightness: Balanced | Focus: Sharp")
         score_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         top_layout.addWidget(score_label)
@@ -43,15 +49,14 @@ class MainWindow(QMainWindow):
         center_widget = QWidget()
         center_layout = QHBoxLayout(center_widget)
 
-        # Left: Button panel (≈15% width)
+        # Left: Button panel (15% width)
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        # Add mode buttons.
         mode_map = {
             "Transform": "transform",
-            "Prompt": "selection",
-            "Auto": "auto"
+            "Select Object": "selection",
+            "Select Salient Object": "auto"
         }
         for text, mode in mode_map.items():
             btn = QPushButton(text)
@@ -60,22 +65,21 @@ class MainWindow(QMainWindow):
             left_layout.addWidget(btn)
             self.mode_buttons[mode] = btn
 
-        # Additional control buttons.
-        apply_button = QPushButton("Apply")
-        apply_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        apply_button.clicked.connect(self.apply_action)
-        left_layout.addWidget(apply_button)
+        deselect_button = QPushButton("Deselect Selection")
+        deselect_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        deselect_button.clicked.connect(self.apply_action)
+        left_layout.addWidget(deselect_button)
 
-        controlnet_button = QPushButton("Control Net")
-        controlnet_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        controlnet_button.clicked.connect(self.control_net_action)
-        left_layout.addWidget(controlnet_button)
+        controlnet_generate_button = QPushButton("Control Net Generate")
+        controlnet_generate_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        controlnet_generate_button.clicked.connect(self.control_net_action)
+        left_layout.addWidget(controlnet_generate_button)
         left_layout.addStretch(1)
 
-        # Center: Image view (≈70% width)
+        # Center: Image view (70% width)
         self.view = CustomGraphicsView()
 
-        # Right: Layer info panel (≈15% width)
+        # Right: Layer info panel (15% width)
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
@@ -85,7 +89,6 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.layer_info)
         right_layout.addStretch(1)
 
-        # Add widgets to center_layout with stretch factors (15, 70, 15)
         center_layout.addWidget(left_panel, 15)
         center_layout.addWidget(self.view, 70)
         center_layout.addWidget(right_panel, 15)
@@ -95,47 +98,47 @@ class MainWindow(QMainWindow):
         # ---------------------------
         bottom_widget = QWidget()
         bottom_layout = QHBoxLayout(bottom_widget)
-        # Left: Prompt area (multi-line)
+        # Left: Prompt area.
         prompt_layout = QVBoxLayout()
         prompt_label = QLabel("Prompt:")
         self.prompt_field = QTextEdit()
-        self.prompt_field.setPlaceholderText("Enter your prompt here for Control Net inpainting...")
+        self.default_prompt = (
+            "Example: This photo was taken at [Location, Country].\n"
+            "Generate a realistic extension of the scene, preserving its color, lighting, and texture.\n"
+            "Use reference images (if available) to maintain consistency in style and detail."
+        )
+        self.prompt_field.setPlainText(self.default_prompt)
         prompt_layout.addWidget(prompt_label)
         prompt_layout.addWidget(self.prompt_field)
-        # Set equal width (50%)
+        restore_button = QPushButton("Restore Default Prompt")
+        restore_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        restore_button.clicked.connect(self.restore_default_prompt)
+        prompt_layout.addWidget(restore_button)
         bottom_layout.addLayout(prompt_layout, 1)
 
-        # Right: Reference thumbnails panel in a scroll area.
-        reference_widget = QWidget()
-        reference_layout = QHBoxLayout(reference_widget)
-        reference_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        reference_images_dir = "images/reference_images"
-        if os.path.exists(reference_images_dir):
-            for img_path in glob.glob(f"{reference_images_dir}/*.*"):
-                try:
-                    thumb = QPixmap(img_path).scaled(30, 30, Qt.AspectRatioMode.KeepAspectRatio,
-                                                      Qt.TransformationMode.SmoothTransformation)
-                    thumb_label = QLabel()
-                    thumb_label.setPixmap(thumb)
-                    thumb_label.setToolTip(os.path.basename(img_path))
-                    reference_layout.addWidget(thumb_label)
-                except Exception as e:
-                    print(f"Error loading reference image {img_path}: {e}")
-        else:
-            error_label = QLabel("No reference images found.")
-            reference_layout.addWidget(error_label)
-
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setWidget(reference_widget)
-        scroll_area.setFixedHeight(30)
-        # Set equal width (50%)
-        bottom_layout.addWidget(scroll_area, 1)
+        # Right: Reference images panel using QListWidget.
+        reference_container = QWidget()
+        reference_vlayout = QVBoxLayout(reference_container)
+        reference_vlayout.setContentsMargins(0, 0, 0, 0)
+        button_layout = QHBoxLayout()
+        add_button = QPushButton("Add Reference Images")
+        add_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_button.clicked.connect(self.add_reference_images)
+        button_layout.addWidget(add_button)
+        delete_button = QPushButton("Delete Selected Reference Images")
+        delete_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        delete_button.clicked.connect(self.delete_selected_reference_images)
+        button_layout.addWidget(delete_button)
+        reference_vlayout.addLayout(button_layout)
+        self.reference_list_widget = QListWidget()
+        self.reference_list_widget.setIconSize(QSize(50, 50))
+        self.reference_list_widget.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        reference_vlayout.addWidget(self.reference_list_widget)
+        bottom_layout.addWidget(reference_container, 1)
 
         # ---------------------------
         # Assemble Main Layout
         # ---------------------------
-        # Vertical stretch factors: top:5, center:70, bottom:25 (approx 5%, 70%, 25%)
         main_layout.addWidget(top_widget, 5)
         main_layout.addWidget(center_widget, 70)
         main_layout.addWidget(bottom_widget, 25)
@@ -144,6 +147,51 @@ class MainWindow(QMainWindow):
         self.create_menu_bar()
         self.adjustSize()
         self.set_mode_action("transform")
+        self.refresh_reference_list()
+
+    def restore_default_prompt(self):
+        self.prompt_field.setPlainText(self.default_prompt)
+
+    def refresh_reference_list(self):
+        self.reference_list_widget.clear()
+        if os.path.exists(self.reference_dir):
+            for file in os.listdir(self.reference_dir):
+                file_path = os.path.join(self.reference_dir, file)
+                if os.path.isfile(file_path):
+                    icon = QIcon(QPixmap(file_path).scaled(50, 50, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+                    item = QListWidgetItem(icon, file)
+                    item.setData(Qt.ItemDataRole.UserRole, file_path)
+                    self.reference_list_widget.addItem(item)
+        else:
+            # Should not happen as directory is ensured to exist.
+            pass
+
+    def add_reference_images(self):
+        file_dialog = QFileDialog(self)
+        file_dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
+        file_dialog.setNameFilter("Image Files (*.png *.jpg *.jpeg *.bmp *.gif)")
+        if file_dialog.exec():
+            files = file_dialog.selectedFiles()
+            for file in files:
+                basename = os.path.basename(file)
+                destination = os.path.join(self.reference_dir, basename)
+                if os.path.exists(destination):
+                    destination = os.path.join(self.reference_dir, f"{uuid.uuid4().hex}_{basename}")
+                try:
+                    shutil.copy(file, destination)
+                except Exception as e:
+                    print(f"Error copying file {file} to {destination}: {e}")
+            self.refresh_reference_list()
+
+    def delete_selected_reference_images(self):
+        selected_items = self.reference_list_widget.selectedItems()
+        for item in selected_items:
+            file_path = item.data(Qt.ItemDataRole.UserRole)
+            try:
+                os.remove(file_path)
+            except Exception as e:
+                print(f"Failed to delete {file_path}: {e}")
+        self.refresh_reference_list()
 
     def set_mode_action(self, mode):
         self.view.set_mode(mode)
@@ -209,7 +257,6 @@ class MainWindow(QMainWindow):
         if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
             QMessageBox.warning(self, "Control Net", "No image loaded for processing.")
             return
-
         cv_img = self.view.cv_image
         if len(cv_img.shape) == 3:
             if cv_img.shape[2] == 3:
@@ -224,29 +271,23 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "Control Net", "Unsupported image format.")
             return
-
         pil_image_rgba = pil_image.convert("RGBA")
         original_size = pil_image_rgba.size
         alpha = pil_image_rgba.split()[3]
         mask = alpha.point(lambda p: 255 if p < 128 else 0).convert("L")
         pil_image_rgb = pil_image_rgba.convert("RGB")
         adjusted_size = make_divisible_by_8(original_size)
-
-        reference_images_dir = "images/reference_images"
         reference_images = []
-        if os.path.exists(reference_images_dir):
-            for img_path in glob.glob(f"{reference_images_dir}/*.*"):
-                try:
-                    ref_img = Image.open(img_path).convert("RGB")
-                    reference_images.append(ref_img)
-                except Exception as e:
-                    print(f"Error loading reference image {img_path}: {e}")
-
+        for img_path in glob.glob(os.path.join(self.reference_dir, "*.*")):
+            try:
+                ref_img = Image.open(img_path).convert("RGB")
+                reference_images.append(ref_img)
+            except Exception as e:
+                print(f"Error loading reference image {img_path}: {e}")
         prompt = self.prompt_field.toPlainText().strip()
         if not prompt:
             QMessageBox.warning(self, "Control Net", "Please enter a prompt for inpainting.")
             return
-
         pipe = load_controlnet()
         try:
             result = pipe(
@@ -264,7 +305,7 @@ class MainWindow(QMainWindow):
             self.view.background_pixmap = pixmap
             result_np = cv2.cvtColor(np.array(result), cv2.COLOR_RGB2BGR)
             self.view.cv_image = result_np
-
             QMessageBox.information(self, "Control Net", "Control Net processing completed.")
         except Exception as e:
             QMessageBox.critical(self, "Control Net Error", f"An error occurred: {str(e)}")
+
