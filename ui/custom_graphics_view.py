@@ -34,7 +34,13 @@ class CustomGraphicsView(QGraphicsView):
         self.downscale_factor = 0.5
 
         # Main CV image and its conversions.
+        # cv_image: current displayed image (BGR)
         self.cv_image = None
+        # original_cv_image: image as loaded from disk (BGR)
+        self.original_cv_image = None
+        # base_cv_image: latest modified image (BGR) without detection overlays
+        self.base_cv_image = None
+
         self.cv_image_rgba = None
         self.cv_image_rgb = None
         self.cv_image_small = None
@@ -57,7 +63,7 @@ class CustomGraphicsView(QGraphicsView):
         self.checkerboard_pixmap = None
 
     def _update_cv_image_conversions(self):
-        """ Keep RGBA and RGB versions in sync, plus downscaled images and cached masks. """
+        """Keep RGBA and RGB versions in sync, plus downscaled images and cached masks."""
         if self.cv_image is None:
             return
         if len(self.cv_image.shape) < 3:
@@ -129,6 +135,10 @@ class CustomGraphicsView(QGraphicsView):
         if self.cv_image is None:
             print(f"Error: Could not load image from {image_path}")
             return
+
+        # Store the original image and set the base image for further modifications.
+        self.original_cv_image = self.cv_image.copy()
+        self.base_cv_image = self.cv_image.copy()
 
         # Convert to QPixmap
         if not image_path.lower().endswith('.png'):
@@ -333,6 +343,7 @@ class CustomGraphicsView(QGraphicsView):
     def apply_merge(self):
         """
         Merge the overlay into the background, then update self.cv_image.
+        Also update base_cv_image to reflect the latest modified image.
         """
         if not self.selected_pixmap_item and np.count_nonzero(self.auto_selection_mask) == 0:
             print("No selected object or active selection mask to merge.")
@@ -367,7 +378,7 @@ class CustomGraphicsView(QGraphicsView):
         self.cached_masks = None
         print("Merge applied: selection merged into current image.")
 
-        # Update self.cv_image
+        # Update self.cv_image from merged pixmap
         buffer = QBuffer()
         buffer.open(QIODevice.OpenModeFlag.ReadWrite)
         merged_pixmap.save(buffer, "PNG")
@@ -376,6 +387,9 @@ class CustomGraphicsView(QGraphicsView):
         buffer.close()
 
         self._update_cv_image_conversions()
+
+        # Update base image to reflect modifications.
+        self.base_cv_image = self.cv_image.copy()
 
     # --------------------------
     # Mouse & Wheel Events

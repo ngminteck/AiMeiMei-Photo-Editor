@@ -6,22 +6,24 @@ import cv2
 import numpy as np
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QFileDialog, QMenuBar, QMessageBox, QLabel, QTextEdit, QListWidget, QListWidgetItem
+    QPushButton, QFileDialog, QMessageBox, QLabel, QTextEdit, QListWidget, QListWidgetItem
 )
-from PyQt6.QtCore import Qt, QRect, QSize
-from PyQt6.QtGui import QScreen, QPixmap, QAction, QIcon
+from PyQt6.QtCore import Qt, QRect, QSize, QBuffer, QIODevice
+from PyQt6.QtGui import QScreen, QPixmap, QAction, QIcon, QImage, QPainter
 from PIL import Image
 from PIL.ImageQt import ImageQt
 from .custom_graphics_view import CustomGraphicsView
 from providers.controlnet_model_provider import load_controlnet, make_divisible_by_8
+from providers.yolo_detection_provider import detect_main_object
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.current_file = None
         self.mode_buttons = {}  # To store mode buttons
+        self.detection_enabled = False  # Toggle for detection overlay
 
-        # Ensure the reference images directory exists.
+        # Ensure reference images directory exists.
         self.reference_dir = "images/reference_images"
         os.makedirs(self.reference_dir, exist_ok=True)
 
@@ -70,10 +72,18 @@ class MainWindow(QMainWindow):
         deselect_button.clicked.connect(self.apply_action)
         left_layout.addWidget(deselect_button)
 
+        # Detection toggle button (for drawing detection overlay automatically)
+        self.detection_toggle_button = QPushButton("Detection: OFF")
+        self.detection_toggle_button.setCheckable(True)
+        self.detection_toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.detection_toggle_button.clicked.connect(self.toggle_detection_action)
+        left_layout.addWidget(self.detection_toggle_button)
+
         controlnet_generate_button = QPushButton("Control Net Generate")
         controlnet_generate_button.setCursor(Qt.CursorShape.PointingHandCursor)
         controlnet_generate_button.clicked.connect(self.control_net_action)
         left_layout.addWidget(controlnet_generate_button)
+
         left_layout.addStretch(1)
 
         # Center: Image view (70% width)
@@ -158,13 +168,11 @@ class MainWindow(QMainWindow):
             for file in os.listdir(self.reference_dir):
                 file_path = os.path.join(self.reference_dir, file)
                 if os.path.isfile(file_path):
-                    icon = QIcon(QPixmap(file_path).scaled(50, 50, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+                    icon = QIcon(QPixmap(file_path).scaled(50, 50, Qt.AspectRatioMode.KeepAspectRatio,
+                                                             Qt.TransformationMode.SmoothTransformation))
                     item = QListWidgetItem(icon, file)
                     item.setData(Qt.ItemDataRole.UserRole, file_path)
                     self.reference_list_widget.addItem(item)
-        else:
-            # Should not happen as directory is ensured to exist.
-            pass
 
     def add_reference_images(self):
         file_dialog = QFileDialog(self)
@@ -236,6 +244,9 @@ class MainWindow(QMainWindow):
         if image_file:
             self.view.load_image(image_file)
             self.current_file = image_file
+            # If detection is enabled, update it automatically.
+            if self.detection_enabled:
+                self.update_detection()
 
     def save_image(self):
         if self.current_file:
@@ -252,6 +263,10 @@ class MainWindow(QMainWindow):
 
     def apply_action(self):
         self.view.apply_merge()
+        # Update the base image after modifications.
+        self.view.base_cv_image = self.view.cv_image.copy()
+        if self.detection_enabled:
+            self.update_detection()
 
     def control_net_action(self):
         if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
@@ -305,7 +320,52 @@ class MainWindow(QMainWindow):
             self.view.background_pixmap = pixmap
             result_np = cv2.cvtColor(np.array(result), cv2.COLOR_RGB2BGR)
             self.view.cv_image = result_np
+            self.view.base_cv_image = self.view.cv_image.copy()
             QMessageBox.information(self, "Control Net", "Control Net processing completed.")
+            if self.detection_enabled:
+                self.update_detection()
         except Exception as e:
             QMessageBox.critical(self, "Control Net Error", f"An error occurred: {str(e)}")
+
+    def toggle_detection_action(self):
+        # Toggle the detection overlay on/off.
+        self.detection_enabled = not self.detection_enabled
+        if self.detection_enabled:
+            self.detection_toggle_button.setText("Detection: ON")
+            if hasattr(self.view, 'base_cv_image') and self.view.base_cv_image is not None:
+                self.update_detection()
+        else:
+            self.detection_toggle_button.setText("Detection: OFF")
+            if hasattr(self.view, 'base_cv_image'):
+                base = self.view.base_cv_image.copy()
+                ret, buf = cv2.imencode('.png', base)
+                if ret:
+                    pixmap = QPixmap()
+                    pixmap.loadFromData(buf.tobytes(), "PNG")
+                    self.view.main_pixmap_item.setPixmap(pixmap)
+                    self.view.cv_image = base.copy()
+
+    def update_detection(self):
+        """
+        Run YOLO detection on the current modified image (base_cv_image)
+        and update the display.
+        """
+        if not hasattr(self.view, 'base_cv_image') or self.view.base_cv_image is None:
+            return
+        frame = self.view.base_cv_image.copy()
+        # Ensure frame is 3-channel for YOLO
+        if frame.ndim == 3 and frame.shape[2] == 4:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+        try:
+            processed_frame, focus_group = detect_main_object(frame)
+            # Convert processed frame (BGR) to QImage (RGB)
+            rgb_frame = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
+            height, width, ch = rgb_frame.shape
+            bytes_per_line = ch * width
+            q_image = QImage(rgb_frame.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
+            pixmap = QPixmap.fromImage(q_image)
+            self.view.main_pixmap_item.setPixmap(pixmap)
+            self.view.cv_image = processed_frame
+        except Exception as e:
+            QMessageBox.critical(self, "Detection Error", f"An error occurred during detection:\n{str(e)}")
 
