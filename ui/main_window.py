@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QFileDialog, QMessageBox, QLabel, QTextEdit, QListWidget, QListWidgetItem
+    QPushButton, QFileDialog, QMessageBox, QLabel, QTextEdit, QListWidget, QListWidgetItem, QGraphicsPixmapItem
 )
 from PyQt6.QtCore import Qt, QRect, QSize, QBuffer, QIODevice
 from PyQt6.QtGui import QScreen, QPixmap, QAction, QIcon, QImage, QPainter
@@ -250,6 +250,7 @@ class MainWindow(QMainWindow):
 
     def save_image(self):
         if self.current_file:
+            # Only the main image (base image) is saved.
             self.view.save(self.current_file)
             QMessageBox.information(self, "Save", "Image saved successfully!")
         else:
@@ -336,36 +337,91 @@ class MainWindow(QMainWindow):
                 self.update_detection()
         else:
             self.detection_toggle_button.setText("Detection: OFF")
-            if hasattr(self.view, 'base_cv_image'):
-                base = self.view.base_cv_image.copy()
-                ret, buf = cv2.imencode('.png', base)
-                if ret:
-                    pixmap = QPixmap()
-                    pixmap.loadFromData(buf.tobytes(), "PNG")
-                    self.view.main_pixmap_item.setPixmap(pixmap)
-                    self.view.cv_image = base.copy()
+            # Remove the detection overlay if it exists.
+            if hasattr(self.view, 'detection_overlay_item') and self.view.detection_overlay_item is not None:
+                self.view.scene.removeItem(self.view.detection_overlay_item)
+                self.view.detection_overlay_item = None
 
     def update_detection(self):
-        """
-        Run YOLO detection on the current modified image (base_cv_image)
-        and update the display.
-        """
         if not hasattr(self.view, 'base_cv_image') or self.view.base_cv_image is None:
             return
+        # Work on a copy of the base image.
         frame = self.view.base_cv_image.copy()
-        # Ensure frame is 3-channel for YOLO
-        if frame.ndim == 3 and frame.shape[2] == 4:
+        height, width = frame.shape[:2]
+        has_alpha = (frame.ndim == 3 and frame.shape[2] == 4)
+        alpha_channel = None
+        if has_alpha:
+            # Use alpha for filtering but convert frame to BGR for detection.
+            alpha_channel = frame[:, :, 3]
             frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+
         try:
-            processed_frame, focus_group = detect_main_object(frame)
-            # Convert processed frame (BGR) to QImage (RGB)
-            rgb_frame = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
-            height, width, ch = rgb_frame.shape
-            bytes_per_line = ch * width
-            q_image = QImage(rgb_frame.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
-            pixmap = QPixmap.fromImage(q_image)
-            self.view.main_pixmap_item.setPixmap(pixmap)
-            self.view.cv_image = processed_frame
+            # Import detection functions from your provider.
+            from providers.yolo_detection_provider import detect_objects, group_objects, select_focus_object
+
+            objects = detect_objects(frame, alpha_channel)
+            if not objects:
+                # Remove overlay if no detections.
+                if hasattr(self.view, 'detection_overlay_item') and self.view.detection_overlay_item is not None:
+                    self.view.scene.removeItem(self.view.detection_overlay_item)
+                    self.view.detection_overlay_item = None
+                return
+
+            # Group detections and select the focus group.
+            grouped_clusters = group_objects(objects)
+            focus_group = select_focus_object(grouped_clusters, frame.shape)
+
+            # Create a transparent overlay.
+            overlay = np.zeros((height, width, 4), dtype=np.uint8)
+
+            if focus_group is not None:
+                # Define colors in RGBA order.
+                blue = (0, 0, 255, 255)  # For individual boxes.
+                red = (255, 0, 0, 255)  # For the grouped bounding box.
+                scale_factor = 0.95  # Scale factor for individual boxes.
+
+                # Draw individual boxes for each member in the focus group.
+                for member in focus_group.get("members", []):
+                    bx1, by1, bx2, by2 = member["bbox"]
+                    box_width = bx2 - bx1
+                    box_height = by2 - by1
+                    new_width = int(box_width * scale_factor)
+                    new_height = int(box_height * scale_factor)
+                    center_x = bx1 + box_width // 2
+                    center_y = by1 + box_height // 2
+                    new_bx1 = center_x - new_width // 2
+                    new_by1 = center_y - new_height // 2
+                    new_bx2 = new_bx1 + new_width
+                    new_by2 = new_by1 + new_height
+
+                    cv2.rectangle(overlay, (new_bx1, new_by1), (new_bx2, new_by2), blue, thickness=2)
+                    label = member.get("label", "object")
+                    confidence = member.get("confidence", 0)
+                    debug_text = f"{label} {confidence:.2f}"
+                    cv2.putText(overlay, debug_text, (new_bx1, new_by1 - 5),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, blue, 1, cv2.LINE_AA)
+
+                # Draw the overall grouped bounding box in red.
+                x1, y1, x2, y2 = focus_group["bbox"]
+                cv2.rectangle(overlay, (x1, y1), (x2, y2), red, thickness=3)
+
+            # Convert the overlay array to QImage and then QPixmap.
+            q_image = QImage(overlay.data, width, height, width * 4, QImage.Format.Format_RGBA8888)
+            overlay_pixmap = QPixmap.fromImage(q_image)
+
+            # Update or create the overlay item.
+            if hasattr(self.view, 'detection_overlay_item') and self.view.detection_overlay_item is not None:
+                self.view.detection_overlay_item.setPixmap(overlay_pixmap)
+            else:
+                from PyQt6.QtWidgets import QGraphicsPixmapItem
+                self.view.detection_overlay_item = QGraphicsPixmapItem(overlay_pixmap)
+                self.view.detection_overlay_item.setZValue(20)  # Ensure it appears on top.
+                self.view.detection_overlay_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+                self.view.scene.addItem(self.view.detection_overlay_item)
+                # Align the overlay with the main image.
+                self.view.detection_overlay_item.setPos(self.view.main_pixmap_item.pos())
         except Exception as e:
             QMessageBox.critical(self, "Detection Error", f"An error occurred during detection:\n{str(e)}")
+
+
 

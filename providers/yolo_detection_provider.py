@@ -1,4 +1,3 @@
-# providers/yolo_detection_provider.py
 import cv2
 import numpy as np
 from ultralytics import YOLO
@@ -27,13 +26,17 @@ def are_close(box1, box2, distance_threshold=30000, iou_threshold=0.2):
     iou_val = compute_iou(box1, box2)
     return (distance < distance_threshold) or (iou_val > iou_threshold)
 
-def detect_objects(frame):
+def detect_objects(frame, alpha_channel=None, transparency_threshold=128):
     """
     Run YOLO detection on the input frame and return a list of detected objects.
     Each detection is a dict with keys:
       - 'bbox': (x1, y1, x2, y2)
       - 'confidence': detection confidence
       - 'label': object label
+
+    Optionally, if an alpha_channel is provided, then for each detection the average alpha
+    of the corresponding bounding box is computed. If the mean is below the transparency_threshold,
+    the detection is ignored.
     """
     results = yolo_model(frame)
     detected_objects = []
@@ -41,6 +44,21 @@ def detect_objects(frame):
         for box in result.boxes:
             # Get bounding box coordinates
             x1, y1, x2, y2 = map(int, box.xyxy[0])
+            # If an alpha_channel is provided, filter out detections that are mostly transparent.
+            if alpha_channel is not None:
+                h, w = alpha_channel.shape
+                # Clamp coordinates within the alpha mask dimensions.
+                x1_clamped = max(0, min(x1, w-1))
+                x2_clamped = max(0, min(x2, w))
+                y1_clamped = max(0, min(y1, h-1))
+                y2_clamped = max(0, min(y2, h))
+                if x2_clamped <= x1_clamped or y2_clamped <= y1_clamped:
+                    continue
+                region = alpha_channel[y1_clamped:y2_clamped, x1_clamped:x2_clamped]
+                if region.size > 0:
+                    mean_alpha = np.mean(region)
+                    if mean_alpha < transparency_threshold:
+                        continue  # Skip this detection if the region is mostly transparent.
             confidence = float(box.conf[0])
             class_id = int(box.cls[0]) if hasattr(box, 'cls') else None
             label = yolo_model.names[class_id] if class_id is not None else "object"
@@ -81,7 +99,8 @@ def group_objects(objects):
 
 def select_focus_object(grouped_clusters, frame_shape):
     """
-    From grouped clusters, select the focus object based on area, confidence, and distance from the frame center.
+    From grouped clusters, select the focus object based on area, confidence,
+    and distance from the frame center.
     """
     if not grouped_clusters:
         return None
@@ -110,7 +129,7 @@ def draw_bounding_box(frame, group):
 
     blue = (255, 0, 0)  # For individual boxes
     red = (0, 0, 255)   # For the grouped focus box
-    scale_factor = 0.8  # Scale down for individual boxes
+    scale_factor = 0.95  # Scale down for individual boxes
 
     for member in group.get("members", []):
         bx1, by1, bx2, by2 = member["bbox"]
@@ -137,12 +156,14 @@ def draw_bounding_box(frame, group):
     cv2.rectangle(frame, (x1, y1), (x2, y2), red, 3)
     return frame
 
-def detect_main_object(frame):
+def detect_main_object(frame, alpha_channel=None):
     """
-    Runs detection on the frame, groups detections, selects the focus group, and draws bounding boxes.
+    Runs detection on the frame, groups detections, selects the focus group,
+    and draws bounding boxes. If an alpha_channel is provided, it is used to filter out
+    detections from largely transparent regions.
     Returns the modified frame and the focus group.
     """
-    objects = detect_objects(frame)
+    objects = detect_objects(frame, alpha_channel)
     if not objects:
         return frame, None
     grouped_clusters = group_objects(objects)

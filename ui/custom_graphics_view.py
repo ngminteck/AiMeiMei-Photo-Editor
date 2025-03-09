@@ -6,7 +6,6 @@ from PyQt6.QtGui import QPixmap, QPen, QColor, QPainter, QImage, QPainterPath, Q
 from PyQt6.QtCore import Qt, QBuffer, QIODevice
 from providers.sam_model_provider import SAMModelProvider
 
-
 class CustomGraphicsView(QGraphicsView):
     def __init__(self):
         super().__init__()
@@ -22,7 +21,7 @@ class CustomGraphicsView(QGraphicsView):
         # Modes: "selection" (prompt-based), "auto" (auto-based), "transform" (move/scale)
         self.mode = "transform"
 
-        # For prompt-based mode
+        # For prompt-based mode.
         self.positive_points = []
         self.negative_points = []
 
@@ -34,11 +33,8 @@ class CustomGraphicsView(QGraphicsView):
         self.downscale_factor = 0.5
 
         # Main CV image and its conversions.
-        # cv_image: current displayed image (BGR)
         self.cv_image = None
-        # original_cv_image: image as loaded from disk (BGR)
         self.original_cv_image = None
-        # base_cv_image: latest modified image (BGR) without detection overlays
         self.base_cv_image = None
 
         self.cv_image_rgba = None
@@ -53,17 +49,19 @@ class CustomGraphicsView(QGraphicsView):
         # Morphology toggle.
         self.use_morphology = True
 
-        # Rendering
+        # Rendering hints.
         self.aspectRatioMode = Qt.AspectRatioMode.KeepAspectRatio
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        # Optional checkerboard background
+        # Optional checkerboard background.
         self.checkerboard_pixmap = None
 
+        # Detection overlay item for bounding boxes (non-interactive).
+        self.detection_overlay_item = None
+
     def _update_cv_image_conversions(self):
-        """Keep RGBA and RGB versions in sync, plus downscaled images and cached masks."""
         if self.cv_image is None:
             return
         if len(self.cv_image.shape) < 3:
@@ -71,7 +69,6 @@ class CustomGraphicsView(QGraphicsView):
 
         self.image_shape = (self.cv_image.shape[0], self.cv_image.shape[1])
 
-        # Full-size conversions
         if self.cv_image.shape[2] == 4:
             self.cv_image_rgba = cv2.cvtColor(self.cv_image, cv2.COLOR_BGRA2RGBA)
             self.cv_image_rgb = cv2.cvtColor(self.cv_image, cv2.COLOR_BGRA2RGB)
@@ -79,7 +76,6 @@ class CustomGraphicsView(QGraphicsView):
             self.cv_image_rgba = cv2.cvtColor(self.cv_image, cv2.COLOR_BGR2RGBA)
             self.cv_image_rgb = cv2.cvtColor(self.cv_image, cv2.COLOR_BGR2RGB)
 
-        # Downscaled
         self.cv_image_small = cv2.resize(self.cv_image, (0, 0),
                                          fx=self.downscale_factor,
                                          fy=self.downscale_factor)
@@ -90,7 +86,6 @@ class CustomGraphicsView(QGraphicsView):
             self.image_rgba_small = cv2.cvtColor(self.cv_image_small, cv2.COLOR_BGR2RGBA)
             self.image_rgb_small = cv2.cvtColor(self.cv_image_small, cv2.COLOR_BGR2RGB)
 
-        # Regenerate masks if not in transform mode
         if self.mode != "transform":
             with torch.no_grad():
                 self.cached_masks = SAMModelProvider.get_auto_mask_generator().generate(self.image_rgb_small)
@@ -119,6 +114,7 @@ class CustomGraphicsView(QGraphicsView):
 
     def save(self, filepath=None):
         if filepath:
+            # Saves only the main (base) image without overlays.
             self.main_pixmap_item.pixmap().save(filepath, None, 100)
 
     def load_image(self, image_path):
@@ -136,11 +132,9 @@ class CustomGraphicsView(QGraphicsView):
             print(f"Error: Could not load image from {image_path}")
             return
 
-        # Store the original image and set the base image for further modifications.
         self.original_cv_image = self.cv_image.copy()
         self.base_cv_image = self.cv_image.copy()
 
-        # Convert to QPixmap
         if not image_path.lower().endswith('.png'):
             ret, buf = cv2.imencode('.png', self.cv_image)
             if ret:
@@ -155,13 +149,10 @@ class CustomGraphicsView(QGraphicsView):
 
         self.background_pixmap = self.original_pixmap.copy()
 
-        # Update RGBA/RGB conversions
         self._update_cv_image_conversions()
 
-        # Init union mask
         self.auto_selection_mask = np.zeros(self.image_shape, dtype=np.uint8)
 
-        # Display the loaded pixmap
         self.main_pixmap_item = QGraphicsPixmapItem(self.original_pixmap)
         self.scene.addItem(self.main_pixmap_item)
         self.setSceneRect(self.main_pixmap_item.boundingRect())
@@ -268,60 +259,36 @@ class CustomGraphicsView(QGraphicsView):
         self.update_auto_selection_display()
 
     def update_auto_selection_display(self):
-        """
-        Make the selected region transparent in the background
-        and visible in the overlay.
-        """
         if self.cv_image is None or self.auto_selection_mask is None:
             return
 
         mask_uint8 = self.auto_selection_mask.copy()
 
-        # --------------------------
-        # LAYER 1: Background
-        # --------------------------
-        # Convert cv_image_rgba to QImage
+        # LAYER 1: Background (make selected region transparent)
         bg_rgba = self.cv_image_rgba.copy()
-
-        # (A) Make the selected region transparent in the background
-        # So, wherever mask = 255, alpha = 0
         bg_rgba[mask_uint8 == 255, 3] = 0
-
         bg_h, bg_w, bg_ch = bg_rgba.shape
         bg_bytes_per_line = bg_ch * bg_w
         bg_qimage = QImage(bg_rgba.data, bg_w, bg_h, bg_bytes_per_line, QImage.Format.Format_RGBA8888)
         bg_pixmap = QPixmap.fromImage(bg_qimage)
-
-        # Update main pixmap
         self.original_pixmap = bg_pixmap
         self.main_pixmap_item.setPixmap(self.original_pixmap)
 
-        # --------------------------
-        # LAYER 2: Selection Overlay
-        # --------------------------
+        # LAYER 2: Selection Overlay (only display selected areas)
         overlay_rgba = self.cv_image_rgba.copy()
-
-        # (B) Make the outside region transparent in the overlay
-        # So, wherever mask = 0, alpha = 0
         overlay_rgba[mask_uint8 == 0] = [0, 0, 0, 0]
-
         ov_h, ov_w, ov_ch = overlay_rgba.shape
         ov_bytes_per_line = ov_ch * ov_w
         ov_qimage = QImage(overlay_rgba.data, ov_w, ov_h, ov_bytes_per_line, QImage.Format.Format_RGBA8888)
         overlay_pixmap = QPixmap.fromImage(ov_qimage)
 
-        # Remove old overlay item if it exists
         if self.selected_pixmap_item:
             self.scene.removeItem(self.selected_pixmap_item)
 
-        # Create new overlay item
         self.selected_pixmap_item = QGraphicsPixmapItem(overlay_pixmap)
         self.selected_pixmap_item.setZValue(10)
         self.scene.addItem(self.selected_pixmap_item)
 
-        # --------------------------
-        # Contour Feedback (Optional)
-        # --------------------------
         contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         path = QPainterPath()
         for cnt in contours:
@@ -341,10 +308,6 @@ class CustomGraphicsView(QGraphicsView):
         self.selection_feedback_item = self.scene.addPath(path, QPen(QColor("black"), 2))
 
     def apply_merge(self):
-        """
-        Merge the overlay into the background, then update self.cv_image.
-        Also update base_cv_image to reflect the latest modified image.
-        """
         if not self.selected_pixmap_item and np.count_nonzero(self.auto_selection_mask) == 0:
             print("No selected object or active selection mask to merge.")
             if self.selection_feedback_item:
@@ -352,7 +315,6 @@ class CustomGraphicsView(QGraphicsView):
                 self.selection_feedback_item = None
             return
 
-        # Merge overlay into the background
         composite_image = self.main_pixmap_item.pixmap().toImage()
         painter = QPainter(composite_image)
         if self.selected_pixmap_item:
@@ -365,7 +327,6 @@ class CustomGraphicsView(QGraphicsView):
         self.main_pixmap_item.setPixmap(merged_pixmap)
         self.background_pixmap = merged_pixmap
 
-        # Remove overlay items
         if self.selected_pixmap_item:
             self.scene.removeItem(self.selected_pixmap_item)
             self.selected_pixmap_item = None
@@ -373,12 +334,10 @@ class CustomGraphicsView(QGraphicsView):
             self.scene.removeItem(self.selection_feedback_item)
             self.selection_feedback_item = None
 
-        # Reset union mask, cached masks
         self.auto_selection_mask = np.zeros(self.image_shape, dtype=np.uint8)
         self.cached_masks = None
         print("Merge applied: selection merged into current image.")
 
-        # Update self.cv_image from merged pixmap
         buffer = QBuffer()
         buffer.open(QIODevice.OpenModeFlag.ReadWrite)
         merged_pixmap.save(buffer, "PNG")
@@ -388,12 +347,8 @@ class CustomGraphicsView(QGraphicsView):
 
         self._update_cv_image_conversions()
 
-        # Update base image to reflect modifications.
         self.base_cv_image = self.cv_image.copy()
 
-    # --------------------------
-    # Mouse & Wheel Events
-    # --------------------------
     def mousePressEvent(self, event):
         pos = self.mapToScene(event.pos())
         if self.mode == "selection":
