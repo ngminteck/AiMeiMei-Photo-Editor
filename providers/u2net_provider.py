@@ -11,8 +11,8 @@ class U2NetProvider:
     @classmethod
     def load_model(cls, variant="default"):
         """
-        Loads the U²-Net ONNX model.
-        Optionally, you can choose a different variant (e.g., "human") if available.
+        Loads the U²‑Net ONNX model.
+        Optionally, choose a variant (e.g., "human").
         """
         if cls._session is None:
             base_dir = os.path.join(os.path.dirname(__file__), '..', 'models')
@@ -34,58 +34,61 @@ class U2NetProvider:
     @classmethod
     def preprocess(cls, image, target_size=(320, 320)):
         """
-        Preprocesses the image:
-         - If the image has an alpha channel, remove it (convert RGBA → BGR).
+        Prepares the image for U²‑Net:
+         - If image has an alpha channel, convert from RGBA → BGR.
          - Resize to the target size.
-         - Normalize pixel values to the range [0, 1].
-         - Rearrange dimensions to CHW and add a batch dimension.
-        Returns the input tensor and the original size as (orig_w, orig_h).
+         - Normalize pixel values to [0,1].
+         - Convert from HWC to CHW and add a batch dimension.
+        Returns:
+         (input_tensor, (orig_w, orig_h))
         """
         if image.shape[2] == 4:
-            # Remove alpha channel if present.
             image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
         orig_h, orig_w, _ = image.shape
         resized = cv2.resize(image, target_size)
         img = resized.astype(np.float32) / 255.0
         img = img.transpose(2, 0, 1)  # (C, H, W)
-        img = np.expand_dims(img, 0)   # (1, C, H, W)
+        img = np.expand_dims(img, 0)  # (1, C, H, W)
         return img, (orig_w, orig_h)
 
     @classmethod
-    def refine_mask(cls, mask, original_size):
+    def refine_mask(cls, prob_map, original_size, threshold=0.05):
         """
-        Refines the segmentation mask:
-         - Resizes the probability map to the original image size.
-         - Converts probabilities (0 to 1) to an 8-bit scale (0 to 255).
-         - Applies Gaussian blur (kernel 7×7) to soften the edges.
-         - Uses erosion (iterations=2) followed by dilation (iterations=2)
-           with a 3×3 kernel to remove halos and fill small gaps.
-         - Normalizes the result.
+        1. Resize to original size.
+        2. Threshold at 0.05 → convert [0,1] to [0,255].
+        3. Bilateral filter to preserve edges while smoothing noise.
+        4. Re-threshold to ensure binary mask.
+        5. Feather with a small Gaussian blur.
+        6. Normalize to [0..255].
         """
-        # Resize the mask to the original size using linear interpolation.
-        mask = cv2.resize(mask, original_size, interpolation=cv2.INTER_LINEAR)
-        # Convert from [0,1] to [0,255]
-        mask = (mask * 255).astype(np.uint8)
-        # Soften edges with Gaussian blur.
-        mask = cv2.GaussianBlur(mask, (7, 7), 0)
-        # Define a 3x3 kernel.
-        kernel = np.ones((3, 3), np.uint8)
-        # Apply erosion to remove unwanted halos.
-        mask = cv2.erode(mask, kernel, iterations=2)
-        # Then dilation to restore the object size.
-        mask = cv2.dilate(mask, kernel, iterations=1)
-        # Normalize the mask.
-        mask = cv2.normalize(mask, None, 0, 255, cv2.NORM_MINMAX)
-        return mask
+        # 1. Resize to original size
+        prob_map = cv2.resize(prob_map, original_size, interpolation=cv2.INTER_LINEAR)
+
+        # 2. Threshold to create a binary mask in [0,1]
+        _, binary = cv2.threshold(prob_map, threshold, 1.0, cv2.THRESH_BINARY)
+        mask = (binary * 255).astype(np.uint8)
+
+        # 3. Bilateral filter: smooth noise while preserving edges
+        # (d=9, sigmaColor=75, sigmaSpace=75 are typical defaults)
+        mask_bf = cv2.bilateralFilter(mask.astype(np.float32), d=9, sigmaColor=75, sigmaSpace=75)
+
+        # 4. Re-threshold to ensure the result is binary again
+        _, mask = cv2.threshold(mask_bf, 128, 255, cv2.THRESH_BINARY)
+
+        # 5. Feather edges with a small Gaussian blur
+        # Convert to float for a smoother blur, then we'll normalize
+        mask_f = cv2.GaussianBlur(mask.astype(np.float32), (5, 5), 0)
+
+        # 6. Normalize final mask to [0..255] and convert back to uint8
+        mask_f = cv2.normalize(mask_f, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+        return mask_f
 
     @classmethod
-    def postprocess(cls, prediction, original_size):
+    def postprocess(cls, prediction, original_size, threshold=0.05):
         """
-        Postprocesses the model's output:
-         - Handles outputs of shape (1, 1, H, W) or (1, H, W).
-         - Calls refine_mask() to produce a smooth, 8-bit segmentation mask.
+        Handles output shapes (1,1,H,W) or (1,H,W), then calls refine_mask.
         """
-        # Handle different output shapes.
         if len(prediction.shape) == 4 and prediction.shape[1] == 1:
             prob_map = prediction[0, 0, :, :]
         elif len(prediction.shape) == 3:
@@ -93,20 +96,20 @@ class U2NetProvider:
         else:
             raise ValueError(f"Unexpected output shape: {prediction.shape}")
 
-        refined_mask = cls.refine_mask(prob_map, original_size)
-        return refined_mask
+        return cls.refine_mask(prob_map, original_size, threshold)
 
     @classmethod
-    def get_salient_mask(cls, image, variant="default"):
+    def get_salient_mask(cls, image, threshold=0.05):
         """
-        Runs U²-Net segmentation on an image and returns a refined binary mask.
-         - Loads the model (optionally a different variant).
-         - Preprocesses the image.
-         - Runs inference.
-         - Postprocesses the output using the refinement pipeline.
+        Main entry point for generating the mask:
+         - Load U²‑Net if needed.
+         - Preprocess the image.
+         - Run inference.
+         - Postprocess with bilateral filter + feathering.
+         - Return a binary mask [H,W] in uint8 with 0/255.
         """
-        session = cls.load_model(variant)
+        session = cls.load_model()
         input_tensor, original_size = cls.preprocess(image)
         outputs = session.run(None, {cls._input_name: input_tensor})
-        mask = cls.postprocess(outputs[0], original_size)
+        mask = cls.postprocess(outputs[0], original_size, threshold)
         return mask
