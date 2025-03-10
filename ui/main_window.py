@@ -1,3 +1,4 @@
+# main_window.py
 import os
 import shutil
 import glob
@@ -12,7 +13,7 @@ from PyQt6.QtCore import Qt, QRect, QSize, QBuffer, QIODevice
 from PyQt6.QtGui import QScreen, QPixmap, QAction, QIcon, QImage, QPainter
 from PIL import Image
 from PIL.ImageQt import ImageQt
-from .custom_graphics_view import CustomGraphicsView
+from ui.custom_graphics_view import CustomGraphicsView
 from providers.controlnet_model_provider import load_controlnet, make_divisible_by_8
 from providers.yolo_detection_provider import detect_main_object
 
@@ -57,8 +58,7 @@ class MainWindow(QMainWindow):
         left_layout.setContentsMargins(0, 0, 0, 0)
         mode_map = {
             "Transform": "transform",
-            "Select Object": "selection",
-            "Select Salient Object": "auto"
+            "Select Object": "selection"
         }
         for text, mode in mode_map.items():
             btn = QPushButton(text)
@@ -67,11 +67,6 @@ class MainWindow(QMainWindow):
             left_layout.addWidget(btn)
             self.mode_buttons[mode] = btn
 
-        deselect_button = QPushButton("Deselect Selection")
-        deselect_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        deselect_button.clicked.connect(self.apply_action)
-        left_layout.addWidget(deselect_button)
-
         # Detection toggle button (for drawing detection overlay automatically)
         self.detection_toggle_button = QPushButton("Detection: OFF")
         self.detection_toggle_button.setCheckable(True)
@@ -79,10 +74,27 @@ class MainWindow(QMainWindow):
         self.detection_toggle_button.clicked.connect(self.toggle_detection_action)
         left_layout.addWidget(self.detection_toggle_button)
 
+        # New button for U2NET-based auto segmentation (immediate action)
+        auto_select_button = QPushButton("Auto Select Salient Object")
+        auto_select_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        auto_select_button.clicked.connect(self.u2net_auto_action)
+        left_layout.addWidget(auto_select_button)
+
+        deselect_button = QPushButton("Deselect Selection")
+        deselect_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        deselect_button.clicked.connect(self.apply_action)
+        left_layout.addWidget(deselect_button)
+
+        upscale_button = QPushButton("4k Resolution")
+        upscale_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        upscale_button.clicked.connect(self.upscale_image_action)
+        left_layout.addWidget(upscale_button)
+
         controlnet_generate_button = QPushButton("Control Net Generate")
         controlnet_generate_button.setCursor(Qt.CursorShape.PointingHandCursor)
         controlnet_generate_button.clicked.connect(self.control_net_action)
         left_layout.addWidget(controlnet_generate_button)
+
 
         left_layout.addStretch(1)
 
@@ -244,13 +256,11 @@ class MainWindow(QMainWindow):
         if image_file:
             self.view.load_image(image_file)
             self.current_file = image_file
-            # If detection is enabled, update it automatically.
             if self.detection_enabled:
                 self.update_detection()
 
     def save_image(self):
         if self.current_file:
-            # Only the main image (base image) is saved.
             self.view.save(self.current_file)
             QMessageBox.information(self, "Save", "Image saved successfully!")
         else:
@@ -264,7 +274,6 @@ class MainWindow(QMainWindow):
 
     def apply_action(self):
         self.view.apply_merge()
-        # Update the base image after modifications.
         self.view.base_cv_image = self.view.cv_image.copy()
         if self.detection_enabled:
             self.update_detection()
@@ -329,7 +338,6 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Control Net Error", f"An error occurred: {str(e)}")
 
     def toggle_detection_action(self):
-        # Toggle the detection overlay on/off.
         self.detection_enabled = not self.detection_enabled
         if self.detection_enabled:
             self.detection_toggle_button.setText("Detection: ON")
@@ -337,7 +345,6 @@ class MainWindow(QMainWindow):
                 self.update_detection()
         else:
             self.detection_toggle_button.setText("Detection: OFF")
-            # Remove the detection overlay if it exists.
             if hasattr(self.view, 'detection_overlay_item') and self.view.detection_overlay_item is not None:
                 self.view.scene.removeItem(self.view.detection_overlay_item)
                 self.view.detection_overlay_item = None
@@ -345,42 +352,33 @@ class MainWindow(QMainWindow):
     def update_detection(self):
         if not hasattr(self.view, 'base_cv_image') or self.view.base_cv_image is None:
             return
-        # Work on a copy of the base image.
         frame = self.view.base_cv_image.copy()
         height, width = frame.shape[:2]
         has_alpha = (frame.ndim == 3 and frame.shape[2] == 4)
         alpha_channel = None
         if has_alpha:
-            # Use alpha for filtering but convert frame to BGR for detection.
             alpha_channel = frame[:, :, 3]
             frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
         try:
-            # Import detection functions from your provider.
             from providers.yolo_detection_provider import detect_objects, group_objects, select_focus_object
-
             objects = detect_objects(frame, alpha_channel)
             if not objects:
-                # Remove overlay if no detections.
                 if hasattr(self.view, 'detection_overlay_item') and self.view.detection_overlay_item is not None:
                     self.view.scene.removeItem(self.view.detection_overlay_item)
                     self.view.detection_overlay_item = None
                 return
 
-            # Group detections and select the focus group.
             grouped_clusters = group_objects(objects)
             focus_group = select_focus_object(grouped_clusters, frame.shape)
 
-            # Create a transparent overlay.
             overlay = np.zeros((height, width, 4), dtype=np.uint8)
 
             if focus_group is not None:
-                # Define colors in RGBA order.
-                blue = (0, 0, 255, 255)  # For individual boxes.
-                red = (255, 0, 0, 255)  # For the grouped bounding box.
-                scale_factor = 0.95  # Scale factor for individual boxes.
+                blue = (0, 0, 255, 255)
+                red = (255, 0, 0, 255)
+                scale_factor = 0.95
 
-                # Draw individual boxes for each member in the focus group.
                 for member in focus_group.get("members", []):
                     bx1, by1, bx2, by2 = member["bbox"]
                     box_width = bx2 - bx1
@@ -401,27 +399,44 @@ class MainWindow(QMainWindow):
                     cv2.putText(overlay, debug_text, (new_bx1, new_by1 - 5),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, blue, 1, cv2.LINE_AA)
 
-                # Draw the overall grouped bounding box in red.
                 x1, y1, x2, y2 = focus_group["bbox"]
                 cv2.rectangle(overlay, (x1, y1), (x2, y2), red, thickness=3)
 
-            # Convert the overlay array to QImage and then QPixmap.
             q_image = QImage(overlay.data, width, height, width * 4, QImage.Format.Format_RGBA8888)
             overlay_pixmap = QPixmap.fromImage(q_image)
 
-            # Update or create the overlay item.
             if hasattr(self.view, 'detection_overlay_item') and self.view.detection_overlay_item is not None:
                 self.view.detection_overlay_item.setPixmap(overlay_pixmap)
             else:
                 from PyQt6.QtWidgets import QGraphicsPixmapItem
                 self.view.detection_overlay_item = QGraphicsPixmapItem(overlay_pixmap)
-                self.view.detection_overlay_item.setZValue(20)  # Ensure it appears on top.
+                self.view.detection_overlay_item.setZValue(20)
                 self.view.detection_overlay_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
                 self.view.scene.addItem(self.view.detection_overlay_item)
-                # Align the overlay with the main image.
                 self.view.detection_overlay_item.setPos(self.view.main_pixmap_item.pos())
         except Exception as e:
             QMessageBox.critical(self, "Detection Error", f"An error occurred during detection:\n{str(e)}")
 
+    def u2net_auto_action(self):
+        if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
+            QMessageBox.warning(self, "Auto Salient Object", "No image loaded.")
+            return
+        try:
+            from providers.u2net_provider import U2NetProvider
+            mask = U2NetProvider.get_salient_mask(self.view.cv_image)
+            self.view.auto_selection_mask = mask
+            self.view.update_auto_selection_display()
+            QMessageBox.information(self, "Auto Salient Object", "Salient object segmentation completed.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"An error occurred:\n{str(e)}")
 
+    def upscale_image_action(self):
+        print('TODO')
 
+if __name__ == "__main__":
+    import sys
+    from PyQt6.QtWidgets import QApplication
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())

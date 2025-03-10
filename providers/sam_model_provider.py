@@ -1,4 +1,3 @@
-# providers/sam_model_provider.py
 import os
 import torch
 import multiprocessing
@@ -20,7 +19,7 @@ class SAMModelProvider:
     def get_model(cls):
         if cls._model is None:
             device = cls.get_device()
-            # Determine the base directory for model weights.
+            # Base directory for model weights (adjust path as needed).
             base_dir = os.path.join(os.path.dirname(__file__), '..', 'models')
             if device == "cuda":
                 SAM_CHECKPOINT = os.path.join(base_dir, "sam_vit_h_4b8939.pth")
@@ -31,7 +30,6 @@ class SAMModelProvider:
                 cpu_core_count = multiprocessing.cpu_count()
                 torch.set_num_threads(cpu_core_count)
                 print(f"Detected {cpu_core_count} CPU cores. Configured PyTorch to use {cpu_core_count} threads.")
-
             cls._model = sam_model_registry[MODEL_TYPE](checkpoint=SAM_CHECKPOINT)
             cls._model.to(device)
             cls._model.eval()
@@ -48,9 +46,9 @@ class SAMModelProvider:
         if cls._auto_mask_generator is None:
             cls._auto_mask_generator = SamAutomaticMaskGenerator(
                 cls.get_model(),
-                points_per_side=32,          # Reduced density for faster computation.
-                pred_iou_thresh=0.80,
-                stability_score_thresh=0.90,
-                min_mask_region_area=500
+                points_per_side=64,           # Increased for higher granularity.
+                pred_iou_thresh=0.75,         # Adjusted overlap threshold.
+                stability_score_thresh=0.95,  # More stable mask regions.
+                min_mask_region_area=200      # Allow smaller regions if needed.
             )
         return cls._auto_mask_generator
