@@ -1,4 +1,5 @@
 # main_window.py
+
 import os
 import shutil
 import glob
@@ -14,20 +15,22 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QScreen, QPixmap, QAction, QImage, QPainter, QIcon
 from PyQt6.QtCore import Qt, QRect, QSize, QBuffer, QIODevice
+
 from PIL import Image, ImageDraw
 from PIL.ImageQt import ImageQt
 
-
-# Import your custom graphics view and providers.
+# Local modules
 from ui.custom_graphics_view import CustomGraphicsView
 from providers.controlnet_model_provider import load_controlnet, make_divisible_by_8
-from providers.yolo_detection_provider import detect_main_object
+from providers.yolo_detection_provider import detect_main_object, detect_objects, group_objects, select_focus_object
+from providers.realesrgan_provider import RealESRGANProvider
+
 
 # ------------------------------------------------------------------
 # FilterPanelWidget: vertical, scrollable panel on the right side.
 # ------------------------------------------------------------------
 class FilterPanelWidget(QWidget):
-    def __init__(self, view, parent=None):
+    def __init__(self, view: CustomGraphicsView, parent=None):
         super().__init__(parent)
         self.view = view  # CustomGraphicsView instance
         self.original_image = None  # PIL image will be stored here
@@ -36,8 +39,9 @@ class FilterPanelWidget(QWidget):
         self.initUI()
 
     def get_available_filters(self):
-        # Explicit list of filter functions and their names from Pilgram.
-        # "No Filter" removed.
+        """
+        Returns an explicit dictionary mapping filter names to pilgram filter functions.
+        """
         filters = {
             "1977": pilgram._1977,
             "Aden": pilgram.aden,
@@ -81,7 +85,7 @@ class FilterPanelWidget(QWidget):
         return checkerboard
 
     def composite_with_checkerboard(self, image):
-        """If the image has transparency, composite it on top of a checkerboard."""
+        """Composite image with a checkerboard background if it has transparency."""
         if image.mode != "RGBA":
             image = image.convert("RGBA")
         bg = self.create_checkerboard(image.size)
@@ -89,8 +93,7 @@ class FilterPanelWidget(QWidget):
 
     def ImageToQPixmap(self, image):
         """
-        Convert a PIL image to QPixmap with smooth scaling to a fixed icon size.
-        This is used only for thumbnails.
+        Convert a PIL image to a QPixmap scaled for thumbnails.
         """
         if image is None:
             image = self.create_checkerboard((self.buttonIconSize.width(), self.buttonIconSize.height()))
@@ -104,10 +107,8 @@ class FilterPanelWidget(QWidget):
     def PILImageToQPixmap(self, image):
         """
         Convert a PIL image to QPixmap without scaling.
-        This is used when updating the main image view.
         """
         if image is None:
-            # Use the scene's size as fallback.
             rect = self.view.scene.sceneRect()
             image = self.create_checkerboard((int(rect.width()), int(rect.height())))
         elif "A" in image.getbands():
@@ -116,7 +117,7 @@ class FilterPanelWidget(QWidget):
         return QPixmap.fromImage(qimage)
 
     def initUI(self):
-        # Create a scroll area to hold the filter buttons.
+        """Initialize UI with a scroll area to hold filter buttons."""
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         container = QWidget()
@@ -129,8 +130,7 @@ class FilterPanelWidget(QWidget):
 
     def get_filtered_image_with_alpha(self, image, filter_function):
         """
-        Apply a Pilgram filter while preserving the original alpha channel
-        (if the image already has transparency).
+        Apply a Pilgram filter while preserving the alpha channel.
         """
         if image.mode != "RGBA":
             image = image.convert("RGBA")
@@ -142,6 +142,7 @@ class FilterPanelWidget(QWidget):
         return filtered_rgba
 
     def refresh_thumbnails(self):
+        """Refresh filter thumbnails using the current image from the view."""
         # Clear existing buttons
         while self.layout.count():
             child = self.layout.takeAt(0)
@@ -157,7 +158,7 @@ class FilterPanelWidget(QWidget):
             pil_image = Image.fromqimage(qpixmap.toImage())
             self.original_image = pil_image
 
-        # Create filter buttons for each filter.
+        # Create filter buttons for each available filter.
         for name, f in self.available_filters.items():
             filterButton = QToolButton()
             try:
@@ -176,12 +177,11 @@ class FilterPanelWidget(QWidget):
 
     def OnFilterSelect(self):
         """
-        Apply the selected filter to the original image, and update
-        the main_pixmap_item in the CustomGraphicsView using full resolution.
+        Apply the selected filter to the original image and update the main view.
         """
         button = self.sender()
         filterName = button.objectName()
-        filterFunction = self.available_filters.get(filterName, None)
+        filterFunction = self.available_filters.get(filterName)
         if not filterFunction:
             return
 
@@ -201,9 +201,9 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.current_file = None
-        self.mode_buttons = {}  # To store mode buttons
+        self.mode_buttons = {}  # Dictionary to store mode buttons
         self.detection_enabled = False  # Toggle for detection overlay
-        self.reference_dir = "images/reference_images"
+        self.reference_dir = os.path.join("images", "reference_images")
         os.makedirs(self.reference_dir, exist_ok=True)
         self.initUI()
 
@@ -327,9 +327,11 @@ class MainWindow(QMainWindow):
         self.refresh_reference_list()
 
     def restore_default_prompt(self):
+        """Restore the default prompt text."""
         self.prompt_field.setPlainText(self.default_prompt)
 
     def refresh_reference_list(self):
+        """Refresh the list of reference images."""
         self.reference_list_widget.clear()
         if os.path.exists(self.reference_dir):
             for file in os.listdir(self.reference_dir):
@@ -345,6 +347,7 @@ class MainWindow(QMainWindow):
                     self.reference_list_widget.addItem(item)
 
     def add_reference_images(self):
+        """Add reference images from file dialog."""
         file_dialog = QFileDialog(self)
         file_dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
         file_dialog.setNameFilter("Image Files (*.png *.jpg *.jpeg *.bmp *.gif)")
@@ -362,6 +365,7 @@ class MainWindow(QMainWindow):
             self.refresh_reference_list()
 
     def delete_selected_reference_images(self):
+        """Delete the selected reference images."""
         selected_items = self.reference_list_widget.selectedItems()
         for item in selected_items:
             file_path = item.data(Qt.ItemDataRole.UserRole)
@@ -371,18 +375,18 @@ class MainWindow(QMainWindow):
                 print(f"Failed to delete {file_path}: {e}")
         self.refresh_reference_list()
 
-    def set_mode_action(self, mode):
+    def set_mode_action(self, mode: str):
+        """Set the current mode for the view and update active button styling."""
         self.view.set_mode(mode)
         self.update_active_button(mode)
 
-    def update_active_button(self, active_mode):
+    def update_active_button(self, active_mode: str):
+        """Update the styling for mode buttons."""
         for mode, btn in self.mode_buttons.items():
-            if mode == active_mode:
-                btn.setStyleSheet("background-color: #87CEFA;")
-            else:
-                btn.setStyleSheet("")
+            btn.setStyleSheet("background-color: #87CEFA;" if mode == active_mode else "")
 
     def create_menu_bar(self):
+        """Create a simple menu bar with File actions."""
         menubar = self.menuBar()
         file_menu = menubar.addMenu("File")
         open_action = QAction("Open", self)
@@ -396,6 +400,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(save_as_action)
 
     def adjustSize(self):
+        """Adjust window size based on available screen geometry."""
         screen = QApplication.primaryScreen().availableGeometry()
         width = int(screen.width() * 0.6)
         height = int(screen.height() * 0.8)
@@ -403,22 +408,25 @@ class MainWindow(QMainWindow):
         self.center()
 
     def center(self):
+        """Center the window on the primary screen."""
         qr = self.frameGeometry()
         cp = QScreen.availableGeometry(QApplication.primaryScreen()).center()
         qr.moveCenter(cp)
         self.move(qr.topLeft())
 
     def open_image(self):
+        """Open an image file and load it into the view."""
         file_dialog = QFileDialog()
         image_file, _ = file_dialog.getOpenFileName(self, "Open Image", "", "Image Files (*.png *.jpg *.bmp)")
         if image_file:
             self.view.load_image(image_file)
             self.current_file = image_file
-            self.filter_panel.refresh_thumbnails()  # Update filter thumbnails with the new image.
+            self.filter_panel.refresh_thumbnails()
             if self.detection_enabled:
                 self.update_detection()
 
     def save_image(self):
+        """Save the current image."""
         if self.current_file:
             self.view.save(self.current_file)
             QMessageBox.information(self, "Save", "Image saved successfully!")
@@ -426,21 +434,25 @@ class MainWindow(QMainWindow):
             self.save_image_as()
 
     def save_image_as(self):
+        """Save the image as a new file."""
         file_dialog = QFileDialog()
         file_path, _ = file_dialog.getSaveFileName(self, "Save Image As", "", "Image Files (*.png *.jpg *.bmp)")
         if file_path:
             self.view.save(file_path)
 
     def apply_action(self):
+        """Merge the selection into the main image and update detection if enabled."""
         self.view.apply_merge()
         self.view.base_cv_image = self.view.cv_image.copy()
         if self.detection_enabled:
             self.update_detection()
 
     def control_net_action(self):
+        """Process the image using Control Net."""
         if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
             QMessageBox.warning(self, "Control Net", "No image loaded for processing.")
             return
+
         cv_img = self.view.cv_image
         if len(cv_img.shape) == 3:
             if cv_img.shape[2] == 3:
@@ -505,6 +517,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Control Net Error", f"An error occurred: {str(e)}")
 
     def toggle_detection_action(self):
+        """Toggle the detection overlay on or off."""
         self.detection_enabled = not self.detection_enabled
         if self.detection_enabled:
             self.detection_toggle_button.setText("Detection: ON")
@@ -517,18 +530,18 @@ class MainWindow(QMainWindow):
                 self.view.detection_overlay_item = None
 
     def update_detection(self):
+        """Update the detection overlay using YOLO-based object detection."""
         if not hasattr(self.view, 'base_cv_image') or self.view.base_cv_image is None:
             return
+
         frame = self.view.base_cv_image.copy()
         height, width = frame.shape[:2]
         has_alpha = (frame.ndim == 3 and frame.shape[2] == 4)
-        alpha_channel = None
+        alpha_channel = frame[:, :, 3] if has_alpha else None
         if has_alpha:
-            alpha_channel = frame[:, :, 3]
             frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
         try:
-            from providers.yolo_detection_provider import detect_objects, group_objects, select_focus_object
             objects = detect_objects(frame, alpha_channel)
             if not objects:
                 if hasattr(self.view, 'detection_overlay_item') and self.view.detection_overlay_item is not None:
@@ -569,7 +582,6 @@ class MainWindow(QMainWindow):
             if hasattr(self.view, 'detection_overlay_item') and self.view.detection_overlay_item is not None:
                 self.view.detection_overlay_item.setPixmap(overlay_pixmap)
             else:
-                from PyQt6.QtWidgets import QGraphicsPixmapItem
                 self.view.detection_overlay_item = QGraphicsPixmapItem(overlay_pixmap)
                 self.view.detection_overlay_item.setZValue(20)
                 self.view.detection_overlay_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
@@ -580,11 +592,12 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Detection Error", f"An error occurred during detection:\n{str(e)}")
 
     def u2net_auto_action(self):
+        """Run U²‑Net based salient object segmentation."""
         if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
             QMessageBox.warning(self, "Auto Salient Object", "No image loaded.")
             return
         try:
-            from providers.u2net_provider import U2NetProvider
+            from providers.u2net_provider import U2NetProvider  # Optionally, keep as function-level import if heavy
             mask = U2NetProvider.get_salient_mask(self.view.cv_image)
             self.view.auto_selection_mask = mask
             self.view.update_auto_selection_display()
@@ -593,11 +606,34 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"An error occurred:\n{str(e)}")
 
     def upscale_image_action(self):
-        print('TODO')
+        """Upscale the current image using RealESRGAN and update all conversions."""
+        if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
+            QMessageBox.warning(self, "4k Resolution", "No image loaded for upscaling.")
+            return
+        try:
+            current_image = self.view.cv_image.copy()
+            upscaled_image = RealESRGANProvider.upscale(current_image)
+            self.view.cv_image = upscaled_image
+            self.view.base_cv_image = upscaled_image.copy()
+            self.view._update_cv_image_conversions()
+
+            h, w, ch = self.view.cv_image_rgba.shape
+            bytes_per_line = ch * w
+            qimage = QImage(self.view.cv_image_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
+            pixmap = QPixmap.fromImage(qimage)
+            self.view.main_pixmap_item.setPixmap(pixmap)
+
+            # Optionally adjust view to show full upscaled image
+            self.view.setSceneRect(self.view.main_pixmap_item.boundingRect())
+            self.view.fitInView(self.view.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+
+            QMessageBox.information(self, "4k Resolution", "Image successfully upscaled.")
+        except Exception as e:
+            QMessageBox.critical(self, "Upscale Error", f"An error occurred during upscaling: {str(e)}")
+
 
 if __name__ == "__main__":
     import sys
-    from PyQt6.QtWidgets import QApplication
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
