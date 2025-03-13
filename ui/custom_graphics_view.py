@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import torch
-from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QSizePolicy
+from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QSizePolicy, QGraphicsPathItem
 from PyQt6.QtGui import QPixmap, QPainter, QImage, QPainterPath, QPen, QColor, QBrush
 from PyQt6.QtCore import Qt, QBuffer, QIODevice
 from providers.sam_model_provider import SAMModelProvider
@@ -13,16 +13,16 @@ class CustomGraphicsView(QGraphicsView):
         self.setScene(self.scene)
         self.main_pixmap_item = None          # Background layer item
         self.original_pixmap = None           # Original image pixmap
-        self.background_pixmap = None         # Background layer pixmap (with hole)
-        self.selected_pixmap_item = None      # Foreground (selected) overlay item
+        self.scene_pixmap = None              # current scene layer pixmap (with hole)
+        self.selected_pixmap_item = None      # selected overlay item
         self.selection_feedback_items = []    # For drawing contour feedback
         self.dragging = False
 
-        # Modes: "transform" and "selection"
+        # Modes: "transform", "object selection", "quick selection"
         self.mode = "transform"
         self.positive_points = []             # For SAM prompt-based selection
         self.negative_points = []             # For SAM prompt-based selection
-        self.auto_selection_mask = None       # Binary mask from U2Net auto selection
+        self.u2net_selection_mask = None      # Binary mask from U2Net auto selection
         self.image_shape = None               # (height, width) of current image
 
         # OpenCV images (BGR)
@@ -34,9 +34,9 @@ class CustomGraphicsView(QGraphicsView):
         self.cv_image_rgba = None
 
         # Enhanced image for SAM selection
-        self.enhanced_cv_image = None
-        self.enhanced_cv_image_rgba = None
-        self.enhanced_cv_image_rgb = None
+        self.sam_cv_image = None
+        self.sam_cv_image_rgba = None
+        self.sam_cv_image_rgb = None
 
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
@@ -62,13 +62,13 @@ class CustomGraphicsView(QGraphicsView):
         else:
             self.cv_image_rgba = cv2.cvtColor(self.cv_image, cv2.COLOR_BGR2RGBA)
 
-        self.enhanced_cv_image = self.apply_contrast_and_sharpen(self.cv_image)
+        self.sam_cv_image = self.apply_contrast_and_sharpen(self.cv_image)
         if self.cv_image.shape[2] == 4:
-            self.enhanced_cv_image_rgba = cv2.cvtColor(self.enhanced_cv_image, cv2.COLOR_BGRA2RGBA)
-            self.enhanced_cv_image_rgb = cv2.cvtColor(self.enhanced_cv_image, cv2.COLOR_BGRA2RGB)
+            self.sam_cv_image_rgba = cv2.cvtColor(self.sam_cv_image, cv2.COLOR_BGRA2RGBA)
+            self.sam_cv_image_rgb = cv2.cvtColor(self.sam_cv_image, cv2.COLOR_BGRA2RGB)
         else:
-            self.enhanced_cv_image_rgba = cv2.cvtColor(self.enhanced_cv_image, cv2.COLOR_BGR2RGBA)
-            self.enhanced_cv_image_rgb = cv2.cvtColor(self.enhanced_cv_image, cv2.COLOR_BGR2RGB)
+            self.sam_cv_image_rgba = cv2.cvtColor(self.sam_cv_image, cv2.COLOR_BGR2RGBA)
+            self.sam_cv_image_rgb = cv2.cvtColor(self.sam_cv_image, cv2.COLOR_BGR2RGB)
 
     def drawBackground(self, painter, rect):
         if self.main_pixmap_item:
@@ -97,7 +97,7 @@ class CustomGraphicsView(QGraphicsView):
 
     def load_image(self, image_path):
         # Merge selection if exists.
-        if self.auto_selection_mask is not None and np.count_nonzero(self.auto_selection_mask) > 0:
+        if self.u2net_selection_mask is not None and np.count_nonzero(self.u2net_selection_mask) > 0:
             self.apply_merge()
 
         self.clear_detection()
@@ -109,7 +109,7 @@ class CustomGraphicsView(QGraphicsView):
         self.selection_feedback_items = []
         self.positive_points = []
         self.negative_points = []
-        self.auto_selection_mask = None
+        self.u2net_selection_mask = None
 
         self.image_path = image_path
         self.cv_image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
@@ -132,9 +132,9 @@ class CustomGraphicsView(QGraphicsView):
         else:
             self.original_pixmap = QPixmap(image_path)
 
-        self.background_pixmap = self.original_pixmap.copy()
+        self.scene_pixmap = self.original_pixmap.copy()
         self._update_cv_image_conversions()
-        self.auto_selection_mask = np.zeros(self.image_shape, dtype=np.uint8)
+        self.u2net_selection_mask = np.zeros(self.image_shape, dtype=np.uint8)
 
         self.main_pixmap_item = QGraphicsPixmapItem(self.original_pixmap)
         self.scene.addItem(self.main_pixmap_item)
@@ -150,7 +150,7 @@ class CustomGraphicsView(QGraphicsView):
         if mode != "transform" and self.cv_image is not None:
             self._update_cv_image_conversions()
 
-    def ai_object_selection(self):
+    def object_selection(self):
         if self.cv_image is None:
             print("No image loaded")
             return
@@ -160,7 +160,7 @@ class CustomGraphicsView(QGraphicsView):
 
         with torch.no_grad():
             predictor = SAMModelProvider.get_predictor()
-            predictor.set_image(self.enhanced_cv_image_rgb)
+            predictor.set_image(self.sam_cv_image_rgb)
             points = []
             labels = []
             if self.positive_points:
@@ -183,15 +183,15 @@ class CustomGraphicsView(QGraphicsView):
         mask_uint8 = (mask.astype(np.uint8)) * 255
         kernel = np.ones((5, 5), np.uint8)
         mask_uint8 = cv2.morphologyEx(mask_uint8, cv2.MORPH_CLOSE, kernel)
-        self.auto_selection_mask = cv2.bitwise_or(self.auto_selection_mask, mask_uint8)
+        self.u2net_selection_mask = cv2.bitwise_or(self.u2net_selection_mask, mask_uint8)
 
         bridge_kernel = np.ones((25, 25), np.uint8)
-        self.auto_selection_mask = cv2.morphologyEx(self.auto_selection_mask, cv2.MORPH_CLOSE, bridge_kernel)
+        self.u2net_selection_mask = cv2.morphologyEx(self.u2net_selection_mask, cv2.MORPH_CLOSE, bridge_kernel)
         print("Merged prompt-based selection into union mask with bridging.")
 
         self.positive_points = []
         self.negative_points = []
-        self.update_auto_selection_display()
+        self.update_u2net_selection_display()
 
     def _get_outline_path(self, binary_mask):
         kernel = np.ones((3, 3), np.uint8)
@@ -209,12 +209,12 @@ class CustomGraphicsView(QGraphicsView):
                 path.closeSubpath()
         return path
 
-    def update_auto_selection_display(self):
-        if self.cv_image is None or self.auto_selection_mask is None:
+    def update_u2net_selection_display(self):
+        if self.cv_image is None or self.u2net_selection_mask is None:
             return
 
         bg_rgba = self.cv_image_rgba.copy()
-        bg_alpha = np.where(self.auto_selection_mask == 255, 0, 255).astype(np.uint8)
+        bg_alpha = np.where(self.u2net_selection_mask == 255, 0, 255).astype(np.uint8)
         bg_rgba[:, :, 3] = bg_alpha
 
         h, w, ch = bg_rgba.shape
@@ -224,7 +224,7 @@ class CustomGraphicsView(QGraphicsView):
         self.main_pixmap_item.setPixmap(bg_pixmap)
 
         sel_rgba = self.cv_image_rgba.copy()
-        sel_rgba[self.auto_selection_mask != 255] = [0, 0, 0, 0]
+        sel_rgba[self.u2net_selection_mask != 255] = [0, 0, 0, 0]
         sel_qimage = QImage(sel_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
         sel_pixmap = QPixmap.fromImage(sel_qimage)
 
@@ -234,25 +234,25 @@ class CustomGraphicsView(QGraphicsView):
         self.selected_pixmap_item.setZValue(10)
         self.scene.addItem(self.selected_pixmap_item)
 
-        for item in self.selection_feedback_items:
-            self.scene.removeItem(item)
+        # Clear previous feedback items; new ones will be children of selected_pixmap_item.
         self.selection_feedback_items = []
 
-        outline_path = self._get_outline_path(self.auto_selection_mask)
+        outline_path = self._get_outline_path(self.u2net_selection_mask)
 
-        white_pen = QPen(QColor("white"), 4)
-        item_white = self.scene.addPath(outline_path, white_pen)
+        # Create feedback items as children of selected_pixmap_item so they move together.
+        white_pen = QPen(QColor("white"), 2)
+        item_white = QGraphicsPathItem(outline_path, self.selected_pixmap_item)
+        item_white.setPen(white_pen)
 
-        black_pen = QPen(QColor("black"), 2)
-        item_black = self.scene.addPath(outline_path, black_pen)
+        black_pen = QPen(QColor("black"), 1)
+        item_black = QGraphicsPathItem(outline_path, self.selected_pixmap_item)
+        item_black.setPen(black_pen)
 
         self.selection_feedback_items = [item_white, item_black]
 
     def apply_merge(self):
-        if not self.selected_pixmap_item and (self.auto_selection_mask is None or np.count_nonzero(self.auto_selection_mask) == 0):
+        if self.selected_pixmap_item is None and (self.u2net_selection_mask is None or np.count_nonzero(self.u2net_selection_mask) == 0):
             print("No active selection mask to merge.")
-            for item in self.selection_feedback_items:
-                self.scene.removeItem(item)
             self.selection_feedback_items = []
             return
 
@@ -266,17 +266,17 @@ class CustomGraphicsView(QGraphicsView):
 
         merged_pixmap = QPixmap.fromImage(composite_image)
         self.main_pixmap_item.setPixmap(merged_pixmap)
-        self.background_pixmap = merged_pixmap
+        self.scene_pixmap = merged_pixmap
 
+        # Remove the selected item (which will also remove its child feedback items)
         if self.selected_pixmap_item:
             self.scene.removeItem(self.selected_pixmap_item)
             self.selected_pixmap_item = None
 
-        for item in self.selection_feedback_items:
-            self.scene.removeItem(item)
+        # Since feedback items are children of selected_pixmap_item, clear the list without manual removal.
         self.selection_feedback_items = []
 
-        self.auto_selection_mask = np.zeros(self.image_shape, dtype=np.uint8)
+        self.u2net_selection_mask = np.zeros(self.image_shape, dtype=np.uint8)
         print("Merge applied: selection merged into current image.")
 
         buffer = QBuffer()
@@ -291,14 +291,16 @@ class CustomGraphicsView(QGraphicsView):
 
     def mousePressEvent(self, event):
         pos = self.mapToScene(event.pos())
-        if self.mode == "selection":
+        if self.mode == "object selection":
             if event.button() == Qt.MouseButton.LeftButton:
                 self.positive_points.append([pos.x(), pos.y()])
                 print(f"Added positive point: ({pos.x()}, {pos.y()})")
             elif event.button() == Qt.MouseButton.RightButton:
                 self.negative_points.append([pos.x(), pos.y()])
                 print(f"Added negative point: ({pos.x()}, {pos.y()})")
-            self.ai_object_selection()
+            self.object_selection()
+        elif self.mode == "quick selection":
+            print("TODO")
         elif self.mode == "transform" and self.selected_pixmap_item:
             self.dragging = True
             self.drag_start = pos

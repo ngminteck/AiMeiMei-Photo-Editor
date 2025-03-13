@@ -121,7 +121,8 @@ class MainWindow(QMainWindow):
         # --- Transform Mode and SAM Selection ---
         mode_map = {
             "Transform": "transform",
-            "Select Object": "selection"
+            "Quick Selection": "quick selection",
+            "Object Selection": "object selection"
         }
         for text, mode in mode_map.items():
             btn = QPushButton(text)
@@ -131,7 +132,7 @@ class MainWindow(QMainWindow):
             self.mode_buttons[mode] = btn
 
         # --- U²‑Net Auto Salient Object Selection ---
-        auto_select_button = QPushButton("Auto Select Salient Object")
+        auto_select_button = QPushButton("Salient Object Selection")
         auto_select_button.setCursor(Qt.CursorShape.PointingHandCursor)
         auto_select_button.clicked.connect(self.u2net_auto_action)
         layout.addWidget(auto_select_button)
@@ -163,8 +164,14 @@ class MainWindow(QMainWindow):
         config_group = QGroupBox("Configuration Settings")
         config_layout = QVBoxLayout(config_group)
 
+        quick_selecction_config_group = QGroupBox("Salient Object Selection (U2Net) Configuration")
+        quick_selecction_layout = QVBoxLayout(quick_selecction_config_group)
+        brush_size_label = QLabel("Brush Size:")
+        quick_selecction_layout.addWidget(brush_size_label)
+
+
         # --- U2Net Configuration Group ---
-        u2net_config_group = QGroupBox("Select Salient Object (U2Net) Configuration")
+        u2net_config_group = QGroupBox("Salient Object Selection (U2Net) Configuration")
         u2net_layout = QVBoxLayout(u2net_config_group)
 
         # U2Net Threshold
@@ -235,7 +242,7 @@ class MainWindow(QMainWindow):
         u2net_config_group.setLayout(u2net_layout)
 
         # --- SAM Configuration Group ---
-        sam_config_group = QGroupBox("Select Object (SAM) Configuration")
+        sam_config_group = QGroupBox("Object Selection (SAM) Configuration")
         sam_layout = QVBoxLayout(sam_config_group)
 
         sam_points_label = QLabel("SAM Points Per Side:")
@@ -547,8 +554,8 @@ class MainWindow(QMainWindow):
         try:
             threshold_value = self.u2net_threshold_spin.value()
             mask = U2NetProvider.get_salient_mask(self.view.cv_image, threshold=threshold_value)
-            self.view.auto_selection_mask = mask
-            self.view.update_auto_selection_display()
+            self.view.u2net_selection_mask = mask
+            self.view.update_u2net_selection_display()
             QMessageBox.information(self, "Auto Salient Object", "Salient object segmentation completed.")
             U2NetProvider._session = None
             torch.cuda.empty_cache()
@@ -568,7 +575,7 @@ class MainWindow(QMainWindow):
     def set_mode_action(self, mode: str):
         self.view.set_mode(mode)
         self.update_active_button(mode)
-        if mode != "selection" and (SAMModelProvider._model is not None or
+        if mode != "object selection" and (SAMModelProvider._model is not None or
                                     SAMModelProvider._predictor is not None or
                                     SAMModelProvider._auto_mask_generator is not None):
             SAMModelProvider._model = None
@@ -618,7 +625,7 @@ class MainWindow(QMainWindow):
             qimage = ImageQt(result)
             pixmap = QPixmap.fromImage(qimage)
             self.view.main_pixmap_item.setPixmap(pixmap)
-            self.view.background_pixmap = pixmap
+            self.view.scene_pixmap = pixmap
 
             result_np = cv2.cvtColor(np.array(result), cv2.COLOR_RGB2BGR)
             self.view.cv_image = result_np
@@ -689,7 +696,7 @@ class MainWindow(QMainWindow):
             qimage = ImageQt(result)
             pixmap = QPixmap.fromImage(qimage)
             self.view.main_pixmap_item.setPixmap(pixmap)
-            self.view.background_pixmap = pixmap
+            self.view.scene_pixmap = pixmap
 
             result_np = cv2.cvtColor(np.array(result), cv2.COLOR_RGB2BGR)
             self.view.cv_image = result_np
