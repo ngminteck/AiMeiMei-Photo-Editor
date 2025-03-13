@@ -10,17 +10,18 @@ import torch
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QFileDialog, QMessageBox, QLabel, QTextEdit,
-    QScrollArea, QListWidget, QListWidgetItem, QGraphicsPixmapItem
+    QScrollArea, QListWidget, QListWidgetItem, QGraphicsPixmapItem,
+    QGroupBox, QDoubleSpinBox, QSpinBox
 )
 from PyQt6.QtGui import QScreen, QPixmap, QAction, QImage, QIcon
 from PyQt6.QtCore import Qt, QRect, QSize
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageOps
 from PIL.ImageQt import ImageQt
 
 # Custom modules
 from ui.custom_graphics_view import CustomGraphicsView
-from ui.filter_panel_widget import FilterPanelWidget  # Refactored filter panel
+from ui.filter_panel_widget import FilterPanelWidget  # Assumes you have this module
 
 # Providers
 from simple_lama_inpainting import SimpleLama
@@ -153,7 +154,142 @@ class MainWindow(QMainWindow):
         deselect_button.clicked.connect(self.apply_action)
         layout.addWidget(deselect_button)
 
+        # --- Configuration Settings: Real-Time Update Fields ---
+        self.init_config_settings(layout)
+
         layout.addStretch(1)
+
+    def init_config_settings(self, layout):
+        config_group = QGroupBox("Configuration Settings")
+        config_layout = QVBoxLayout(config_group)
+
+        # --- U2Net Configuration Group ---
+        u2net_config_group = QGroupBox("Select Salient Object (U2Net) Configuration")
+        u2net_layout = QVBoxLayout(u2net_config_group)
+
+        # U2Net Threshold
+        u2net_threshold_label = QLabel("U2Net Threshold:")
+        self.u2net_threshold_spin = QDoubleSpinBox()
+        self.u2net_threshold_spin.setRange(0.0, 1.0)
+        self.u2net_threshold_spin.setSingleStep(0.01)
+        self.u2net_threshold_spin.setValue(0.05)
+        self.u2net_threshold_spin.valueChanged.connect(self.on_u2net_threshold_changed)
+        u2net_layout.addWidget(u2net_threshold_label)
+        u2net_layout.addWidget(self.u2net_threshold_spin)
+
+        # U2Net Target Size
+        u2net_target_width_label = QLabel("U2Net Target Width:")
+        self.u2net_target_width_spin = QSpinBox()
+        self.u2net_target_width_spin.setRange(64, 1024)
+        self.u2net_target_width_spin.setValue(320)
+        self.u2net_target_width_spin.valueChanged.connect(self.on_u2net_config_changed)
+        u2net_layout.addWidget(u2net_target_width_label)
+        u2net_layout.addWidget(self.u2net_target_width_spin)
+
+        u2net_target_height_label = QLabel("U2Net Target Height:")
+        self.u2net_target_height_spin = QSpinBox()
+        self.u2net_target_height_spin.setRange(64, 1024)
+        self.u2net_target_height_spin.setValue(320)
+        self.u2net_target_height_spin.valueChanged.connect(self.on_u2net_config_changed)
+        u2net_layout.addWidget(u2net_target_height_label)
+        u2net_layout.addWidget(self.u2net_target_height_spin)
+
+        # U2Net Bilateral Filter Parameters
+        u2net_bilateral_d_label = QLabel("Bilateral Filter d:")
+        self.u2net_bilateral_d_spin = QSpinBox()
+        self.u2net_bilateral_d_spin.setRange(1, 20)
+        self.u2net_bilateral_d_spin.setValue(9)
+        self.u2net_bilateral_d_spin.valueChanged.connect(self.on_u2net_config_changed)
+        u2net_layout.addWidget(u2net_bilateral_d_label)
+        u2net_layout.addWidget(self.u2net_bilateral_d_spin)
+
+        u2net_sigmaColor_label = QLabel("Sigma Color:")
+        self.u2net_sigmaColor_spin = QDoubleSpinBox()
+        self.u2net_sigmaColor_spin.setRange(1, 200)
+        self.u2net_sigmaColor_spin.setSingleStep(1)
+        self.u2net_sigmaColor_spin.setValue(75)
+        self.u2net_sigmaColor_spin.valueChanged.connect(self.on_u2net_config_changed)
+        u2net_layout.addWidget(u2net_sigmaColor_label)
+        u2net_layout.addWidget(self.u2net_sigmaColor_spin)
+
+        u2net_sigmaSpace_label = QLabel("Sigma Space:")
+        self.u2net_sigmaSpace_spin = QDoubleSpinBox()
+        self.u2net_sigmaSpace_spin.setRange(1, 200)
+        self.u2net_sigmaSpace_spin.setSingleStep(1)
+        self.u2net_sigmaSpace_spin.setValue(75)
+        self.u2net_sigmaSpace_spin.valueChanged.connect(self.on_u2net_config_changed)
+        u2net_layout.addWidget(u2net_sigmaSpace_label)
+        u2net_layout.addWidget(self.u2net_sigmaSpace_spin)
+
+        # U2Net Gaussian Kernel Size
+        u2net_gaussian_kernel_label = QLabel("Gaussian Kernel Size:")
+        self.u2net_gaussian_kernel_spin = QSpinBox()
+        self.u2net_gaussian_kernel_spin.setRange(3, 15)
+        self.u2net_gaussian_kernel_spin.setSingleStep(2)  # only odd numbers ideally
+        self.u2net_gaussian_kernel_spin.setValue(5)
+        self.u2net_gaussian_kernel_spin.valueChanged.connect(self.on_u2net_config_changed)
+        u2net_layout.addWidget(u2net_gaussian_kernel_label)
+        u2net_layout.addWidget(self.u2net_gaussian_kernel_spin)
+
+        config_layout.addWidget(u2net_config_group)
+        u2net_config_group.setLayout(u2net_layout)
+
+        # --- SAM Configuration Group ---
+        sam_config_group = QGroupBox("Select Object (SAM) Configuration")
+        sam_layout = QVBoxLayout(sam_config_group)
+
+        sam_points_label = QLabel("SAM Points Per Side:")
+        self.sam_points_spin = QSpinBox()
+        self.sam_points_spin.setRange(16, 128)
+        self.sam_points_spin.setSingleStep(1)
+        self.sam_points_spin.setValue(64)
+        self.sam_points_spin.valueChanged.connect(self.on_sam_config_changed)
+        sam_layout.addWidget(sam_points_label)
+        sam_layout.addWidget(self.sam_points_spin)
+
+        sam_iou_label = QLabel("SAM IoU Threshold:")
+        self.sam_iou_spin = QDoubleSpinBox()
+        self.sam_iou_spin.setRange(0.0, 1.0)
+        self.sam_iou_spin.setSingleStep(0.05)
+        self.sam_iou_spin.setValue(0.75)
+        self.sam_iou_spin.valueChanged.connect(self.on_sam_config_changed)
+        sam_layout.addWidget(sam_iou_label)
+        sam_layout.addWidget(self.sam_iou_spin)
+
+        config_layout.addWidget(sam_config_group)
+        sam_config_group.setLayout(sam_layout)
+
+        layout.addWidget(config_group)
+
+    def on_u2net_threshold_changed(self, value):
+        print(f"U2Net threshold updated to: {value:.2f}")
+        # (Optional: trigger live update of segmentation.)
+
+    def on_u2net_config_changed(self, value):
+        # Update U2Net provider configuration in real time.
+        target_width = self.u2net_target_width_spin.value()
+        target_height = self.u2net_target_height_spin.value()
+        bilateral_d = self.u2net_bilateral_d_spin.value()
+        sigmaColor = self.u2net_sigmaColor_spin.value()
+        sigmaSpace = self.u2net_sigmaSpace_spin.value()
+        gaussian_kernel_size = self.u2net_gaussian_kernel_spin.value()
+        U2NetProvider.set_config(
+            target_size=(target_width, target_height),
+            bilateral_d=bilateral_d,
+            bilateral_sigmaColor=sigmaColor,
+            bilateral_sigmaSpace=sigmaSpace,
+            gaussian_kernel_size=gaussian_kernel_size
+        )
+        print(f"U2Net config updated: target_size=({target_width}, {target_height}), "
+              f"bilateral_d={bilateral_d}, sigmaColor={sigmaColor}, sigmaSpace={sigmaSpace}, "
+              f"gaussian_kernel_size={gaussian_kernel_size}")
+
+    def on_sam_config_changed(self, value):
+        SAMModelProvider.set_auto_mask_generator_config(
+            points_per_side=self.sam_points_spin.value(),
+            pred_iou_thresh=self.sam_iou_spin.value()
+        )
+        print("SAM configuration updated: auto mask generator reset.")
 
     def init_prompt_area(self, layout):
         prompt_layout = QVBoxLayout()
@@ -220,7 +356,7 @@ class MainWindow(QMainWindow):
             self.view.save(file_path)
 
     # ============================
-    # Feature: Menu Bar and Window Layout
+    # Menu Bar and Window Layout
     # ============================
     def create_menu_bar(self):
         menubar = self.menuBar()
@@ -252,7 +388,7 @@ class MainWindow(QMainWindow):
         self.prompt_field.setPlainText(self.default_prompt)
 
     # ============================
-    # Feature: Reference Images Management
+    # Reference Images Management
     # ============================
     def refresh_reference_list(self):
         self.reference_list_widget.clear()
@@ -297,7 +433,7 @@ class MainWindow(QMainWindow):
         self.refresh_reference_list()
 
     # ============================
-    # Feature: YOLO Detection
+    # YOLO Detection
     # ============================
     def toggle_detection_action(self):
         self.detection_enabled = not self.detection_enabled
@@ -373,7 +509,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Detection Error", f"An error occurred during detection:\n{str(e)}")
 
     # ============================
-    # Feature: 4k Resolution Upscaling
+    # 4k Resolution Upscaling
     # ============================
     def upscale_image_action(self):
         if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
@@ -402,14 +538,15 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Upscale Error", f"An error occurred during upscaling: {str(e)}")
 
     # ============================
-    # Feature: U²‑Net Salient Object Segmentation
+    # U²‑Net Salient Object Segmentation
     # ============================
     def u2net_auto_action(self):
         if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
             QMessageBox.warning(self, "Auto Salient Object", "No image loaded.")
             return
         try:
-            mask = U2NetProvider.get_salient_mask(self.view.cv_image)
+            threshold_value = self.u2net_threshold_spin.value()
+            mask = U2NetProvider.get_salient_mask(self.view.cv_image, threshold=threshold_value)
             self.view.auto_selection_mask = mask
             self.view.update_auto_selection_display()
             QMessageBox.information(self, "Auto Salient Object", "Salient object segmentation completed.")
@@ -420,11 +557,9 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"An error occurred:\n{str(e)}")
 
     # ============================
-    # Feature: Transform Mode & SAM Selection
+    # Transform Mode & SAM Selection
     # ============================
-
     def apply_action(self):
-        """Merge the selection into the main image and update detection if enabled."""
         self.view.apply_merge()
         self.view.base_cv_image = self.view.cv_image.copy()
         if self.detection_enabled:
@@ -433,7 +568,6 @@ class MainWindow(QMainWindow):
     def set_mode_action(self, mode: str):
         self.view.set_mode(mode)
         self.update_active_button(mode)
-        # Clean up SAM resources when switching away from selection mode
         if mode != "selection" and (SAMModelProvider._model is not None or
                                     SAMModelProvider._predictor is not None or
                                     SAMModelProvider._auto_mask_generator is not None):
@@ -448,23 +582,19 @@ class MainWindow(QMainWindow):
             btn.setStyleSheet("background-color: #87CEFA;" if mode == active_mode else "")
 
     # ============================
-    # Feature: Lama Inpainting
+    # Lama Inpainting
     # ============================
     def lama_inpaint_action(self):
         if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
             QMessageBox.warning(self, "Lama Inpaint", "No image loaded for inpainting.")
             return
-
         try:
-            # Convert the current cv image (BGR/BGRA) to a PIL Image in RGBA mode.
             cv_img = self.view.cv_image
             if len(cv_img.shape) == 3:
                 if cv_img.shape[2] == 3:
-                    # Convert from BGR to RGB, then to RGBA.
                     rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
                     pil_image = Image.fromarray(rgb_image).convert("RGBA")
                 elif cv_img.shape[2] == 4:
-                    # Convert from BGRA to RGBA.
                     rgba_image = cv2.cvtColor(cv_img, cv2.COLOR_BGRA2RGBA)
                     pil_image = Image.fromarray(rgba_image)
                 else:
@@ -474,34 +604,26 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Lama Inpaint", "Unsupported image format.")
                 return
 
-            # Ensure the image has an alpha channel.
             if pil_image.mode != "RGBA":
                 QMessageBox.warning(self, "Lama Inpaint",
                                     "Image does not have an alpha channel. Please provide an image with transparency.")
                 return
 
-            # Extract the alpha channel and invert it to create the inpainting mask.
             alpha = pil_image.split()[3]
             mask = ImageOps.invert(alpha.convert("L"))
 
-            # Instantiate SimpleLama.
             simple_lama = SimpleLama()
-
-            # Inpaint using the RGB version of the image along with the mask.
             result = simple_lama(pil_image.convert("RGB"), mask)
 
-            # Convert the result to a QPixmap.
             qimage = ImageQt(result)
             pixmap = QPixmap.fromImage(qimage)
             self.view.main_pixmap_item.setPixmap(pixmap)
             self.view.background_pixmap = pixmap
 
-            # Convert the inpainted result to a numpy array (BGR) and update the view's image data.
             result_np = cv2.cvtColor(np.array(result), cv2.COLOR_RGB2BGR)
             self.view.cv_image = result_np
             self.view.base_cv_image = self.view.cv_image.copy()
 
-            # Sync the updated image conversions.
             self.view._update_cv_image_conversions()
 
             QMessageBox.information(self, "Lama Inpaint", "Lama inpainting completed.")
@@ -510,7 +632,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Lama Inpaint Error", f"An error occurred during inpainting:\n{str(e)}")
 
     # ============================
-    # Feature: Control Net Processing
+    # Control Net Processing
     # ============================
     def control_net_action(self):
         if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
@@ -584,3 +706,8 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Control Net Error", f"An error occurred: {str(e)}")
 
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())

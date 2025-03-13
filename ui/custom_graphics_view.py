@@ -80,8 +80,8 @@ class CustomGraphicsView(QGraphicsView):
             self.checkerboard_pixmap = QPixmap(tile_size, tile_size)
             self.checkerboard_pixmap.fill(Qt.GlobalColor.white)
             tile_painter = QPainter(self.checkerboard_pixmap)
-            tile_painter.fillRect(0, 0, tile_size//2, tile_size//2, Qt.GlobalColor.lightGray)
-            tile_painter.fillRect(tile_size//2, tile_size//2, tile_size//2, tile_size//2, Qt.GlobalColor.lightGray)
+            tile_painter.fillRect(0, 0, tile_size // 2, tile_size // 2, Qt.GlobalColor.lightGray)
+            tile_painter.fillRect(tile_size // 2, tile_size // 2, tile_size // 2, tile_size // 2, Qt.GlobalColor.lightGray)
             tile_painter.end()
         brush = QBrush(self.checkerboard_pixmap)
         painter.fillRect(image_rect, brush)
@@ -96,14 +96,11 @@ class CustomGraphicsView(QGraphicsView):
             self.detection_overlay_item = None
 
     def load_image(self, image_path):
-        # Before loading a new image, force-apply merge if there is an active selection.
+        # Merge selection if exists.
         if self.auto_selection_mask is not None and np.count_nonzero(self.auto_selection_mask) > 0:
             self.apply_merge()
 
-        # Force clear any detection overlay.
         self.clear_detection()
-
-        # Clear scene and selection state.
         self.scene.clear()
         self.main_pixmap_item = None
         self.selected_pixmap_item = None
@@ -197,23 +194,13 @@ class CustomGraphicsView(QGraphicsView):
         self.update_auto_selection_display()
 
     def _get_outline_path(self, binary_mask):
-        """
-        Compute a morphological gradient to get an outline around both
-        outer edges and holes. Convert the result to a QPainterPath.
-        """
-        # 1. Compute morphological gradient
         kernel = np.ones((3, 3), np.uint8)
         outline_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_GRADIENT, kernel)
-
-        # 2. Find contours on outline mask
         contours, _ = cv2.findContours(outline_mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-
-        # 3. Convert contours to a QPainterPath
         path = QPainterPath()
         for cnt in contours:
             if len(cnt) > 0:
                 cnt = cnt.squeeze()
-                # If single point, skip
                 if cnt.ndim < 2:
                     continue
                 path.moveTo(cnt[0][0], cnt[0][1])
@@ -226,7 +213,6 @@ class CustomGraphicsView(QGraphicsView):
         if self.cv_image is None or self.auto_selection_mask is None:
             return
 
-        # --- Create Background Layer ---
         bg_rgba = self.cv_image_rgba.copy()
         bg_alpha = np.where(self.auto_selection_mask == 255, 0, 255).astype(np.uint8)
         bg_rgba[:, :, 3] = bg_alpha
@@ -237,7 +223,6 @@ class CustomGraphicsView(QGraphicsView):
         bg_pixmap = QPixmap.fromImage(bg_qimage)
         self.main_pixmap_item.setPixmap(bg_pixmap)
 
-        # --- Create Selected Layer ---
         sel_rgba = self.cv_image_rgba.copy()
         sel_rgba[self.auto_selection_mask != 255] = [0, 0, 0, 0]
         sel_qimage = QImage(sel_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
@@ -249,12 +234,10 @@ class CustomGraphicsView(QGraphicsView):
         self.selected_pixmap_item.setZValue(10)
         self.scene.addItem(self.selected_pixmap_item)
 
-        # Clear old feedback items
         for item in self.selection_feedback_items:
             self.scene.removeItem(item)
         self.selection_feedback_items = []
 
-        # --- Draw the outline from morphological gradient ---
         outline_path = self._get_outline_path(self.auto_selection_mask)
 
         white_pen = QPen(QColor("white"), 4)

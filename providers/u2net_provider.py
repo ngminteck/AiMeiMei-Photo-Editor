@@ -1,4 +1,3 @@
-# providers/u2net_provider.py
 import os
 import cv2
 import numpy as np
@@ -8,12 +7,15 @@ class U2NetProvider:
     _session = None
     _input_name = None
 
+    # Default configuration parameters (can be updated via set_config)
+    _target_size = (320, 320)
+    _bilateral_d = 9
+    _bilateral_sigmaColor = 75
+    _bilateral_sigmaSpace = 75
+    _gaussian_kernel_size = 5  # Must be odd
+
     @classmethod
     def load_model(cls, variant="default"):
-        """
-        Loads the U²‑Net ONNX model.
-        Optionally, choose a variant (e.g., "human").
-        """
         if cls._session is None:
             base_dir = os.path.join(os.path.dirname(__file__), '..', 'models')
             if variant == "default":
@@ -32,16 +34,24 @@ class U2NetProvider:
         return cls._session
 
     @classmethod
-    def preprocess(cls, image, target_size=(320, 320)):
-        """
-        Prepares the image for U²‑Net:
-         - If image has an alpha channel, convert from RGBA → BGR.
-         - Resize to the target size.
-         - Normalize pixel values to [0,1].
-         - Convert from HWC to CHW and add a batch dimension.
-        Returns:
-         (input_tensor, (orig_w, orig_h))
-        """
+    def set_config(cls, target_size=None, bilateral_d=None, bilateral_sigmaColor=None,
+                   bilateral_sigmaSpace=None, gaussian_kernel_size=None):
+        if target_size is not None:
+            cls._target_size = target_size
+        if bilateral_d is not None:
+            cls._bilateral_d = bilateral_d
+        if bilateral_sigmaColor is not None:
+            cls._bilateral_sigmaColor = bilateral_sigmaColor
+        if bilateral_sigmaSpace is not None:
+            cls._bilateral_sigmaSpace = bilateral_sigmaSpace
+        if gaussian_kernel_size is not None:
+            cls._gaussian_kernel_size = gaussian_kernel_size
+        print("U2NET configuration updated.")
+
+    @classmethod
+    def preprocess(cls, image, target_size=None):
+        if target_size is None:
+            target_size = cls._target_size
         if image.shape[2] == 4:
             image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
         orig_h, orig_w, _ = image.shape
@@ -53,61 +63,34 @@ class U2NetProvider:
 
     @classmethod
     def refine_mask(cls, prob_map, original_size, threshold=0.05):
-        """
-        1. Resize to original size.
-        2. Threshold at 0.05 → convert [0,1] to [0,255].
-        3. Bilateral filter to preserve edges while smoothing noise.
-        4. Re-threshold to ensure binary mask.
-        5. Feather with a small Gaussian blur.
-        6. Normalize to [0..255].
-        """
-        # 1. Resize to original size
+        # Resize to original size.
         prob_map = cv2.resize(prob_map, original_size, interpolation=cv2.INTER_LINEAR)
-
-        # 2. Threshold to create a binary mask in [0,1]
+        # Threshold to create binary mask in [0,1].
         _, binary = cv2.threshold(prob_map, threshold, 1.0, cv2.THRESH_BINARY)
         mask = (binary * 255).astype(np.uint8)
-
-        # 3. Bilateral filter: smooth noise while preserving edges
-        # (d=9, sigmaColor=75, sigmaSpace=75 are typical defaults)
-        mask_bf = cv2.bilateralFilter(mask.astype(np.float32), d=9, sigmaColor=75, sigmaSpace=75)
-
-        # 4. Re-threshold to ensure the result is binary again
+        # Apply bilateral filter with current config.
+        mask_bf = cv2.bilateralFilter(mask.astype(np.float32), d=cls._bilateral_d,
+                                        sigmaColor=cls._bilateral_sigmaColor,
+                                        sigmaSpace=cls._bilateral_sigmaSpace)
+        # Re-threshold.
         _, mask = cv2.threshold(mask_bf, 128, 255, cv2.THRESH_BINARY)
-
-        # 5. Feather edges with a small Gaussian blur
-        # Convert to float for a smoother blur, then we'll normalize
-        mask_f = cv2.GaussianBlur(mask.astype(np.float32), (5, 5), 0)
-
-        # 6. Normalize final mask to [0..255] and convert back to uint8
+        # Feather edges with a Gaussian blur.
+        mask_f = cv2.GaussianBlur(mask.astype(np.float32), (cls._gaussian_kernel_size, cls._gaussian_kernel_size), 0)
         mask_f = cv2.normalize(mask_f, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-
         return mask_f
 
     @classmethod
     def postprocess(cls, prediction, original_size, threshold=0.05):
-        """
-        Handles output shapes (1,1,H,W) or (1,H,W), then calls refine_mask.
-        """
         if len(prediction.shape) == 4 and prediction.shape[1] == 1:
             prob_map = prediction[0, 0, :, :]
         elif len(prediction.shape) == 3:
             prob_map = prediction[0]
         else:
             raise ValueError(f"Unexpected output shape: {prediction.shape}")
-
         return cls.refine_mask(prob_map, original_size, threshold)
 
     @classmethod
     def get_salient_mask(cls, image, threshold=0.05):
-        """
-        Main entry point for generating the mask:
-         - Load U²‑Net if needed.
-         - Preprocess the image.
-         - Run inference.
-         - Postprocess with bilateral filter + feathering.
-         - Return a binary mask [H,W] in uint8 with 0/255.
-        """
         session = cls.load_model()
         input_tensor, original_size = cls.preprocess(image)
         outputs = session.run(None, {cls._input_name: input_tensor})
