@@ -31,6 +31,7 @@ from providers.realesrgan_provider import RealESRGANProvider
 from providers.sam_model_provider import SAMModelProvider
 from providers.u2net_provider import U2NetProvider
 
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -107,8 +108,10 @@ class MainWindow(QMainWindow):
         upscale_button.clicked.connect(self.upscale_image_action)
         layout.addWidget(upscale_button)
 
+        # Updated mode map including Clone Stamp mode.
         mode_map = {
             "Transform": "transform",
+            "Clone Stamp": "clone stamp",
             "Quick Selection": "quick selection",
             "Object Selection": "object selection"
         }
@@ -239,18 +242,27 @@ class MainWindow(QMainWindow):
         brush_size_label = QLabel("Brush Size:")
         self.quick_select_brush_spin = QSpinBox()
         self.quick_select_brush_spin.setRange(1, 100)
-        self.quick_select_brush_spin.setValue(1)
+        self.quick_select_brush_spin.setValue(5)
         self.quick_select_brush_spin.setSingleStep(1)
         self.quick_select_brush_spin.valueChanged.connect(self.on_quick_select_brush_size_changed)
         quick_selection_layout.addWidget(brush_size_label)
         quick_selection_layout.addWidget(self.quick_select_brush_spin)
         config_layout.addWidget(quick_selection_group)
 
-        layout.addWidget(config_group)
+        # --- Clone Stamp Configuration ---
+        clone_stamp_group = QGroupBox("Clone Stamp Configuration")
+        clone_stamp_layout = QVBoxLayout(clone_stamp_group)
+        clone_brush_label = QLabel("Clone Stamp Brush Size:")
+        self.clone_stamp_brush_spin = QSpinBox()
+        self.clone_stamp_brush_spin.setRange(1, 100)
+        self.clone_stamp_brush_spin.setValue(5)
+        self.clone_stamp_brush_spin.setSingleStep(1)
+        self.clone_stamp_brush_spin.valueChanged.connect(self.on_clone_stamp_brush_size_changed)
+        clone_stamp_layout.addWidget(clone_brush_label)
+        clone_stamp_layout.addWidget(self.clone_stamp_brush_spin)
+        config_layout.addWidget(clone_stamp_group)
 
-    def on_quick_select_brush_size_changed(self, value):
-        self.view.quick_select_brush_size = value
-        print(f"Quick selection brush size updated to: {value}")
+        layout.addWidget(config_group)
 
     def on_u2net_threshold_changed(self, value):
         print(f"U2Net threshold updated to: {value:.2f}")
@@ -278,6 +290,13 @@ class MainWindow(QMainWindow):
         )
         print("SAM configuration updated: auto mask generator reset.")
 
+    def on_quick_select_brush_size_changed(self, value):
+        self.view.quick_select_brush_size = value
+        print(f"Quick selection brush size updated to: {value}")
+
+    def on_clone_stamp_brush_size_changed(self, value):
+        self.view.clone_stamp_brush_size = value
+        print(f"Clone stamp brush size updated to: {value}")
 
     def init_prompt_area(self, layout):
         prompt_layout = QVBoxLayout()
