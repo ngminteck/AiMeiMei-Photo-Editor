@@ -31,7 +31,6 @@ from providers.realesrgan_provider import RealESRGANProvider
 from providers.sam_model_provider import SAMModelProvider
 from providers.u2net_provider import U2NetProvider
 
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -47,13 +46,11 @@ class MainWindow(QMainWindow):
         central_widget = QWidget()
         main_layout = QVBoxLayout(central_widget)
 
-        # --- Top Section: Aesthetic Score Display ---
+        # --- Top Section ---
         self.init_top_section(main_layout)
-
-        # --- Center Section: Layout with Button Panel, Image View, and Filter Panel ---
+        # --- Center Section ---
         self.init_center_section(main_layout)
-
-        # --- Bottom Section: Prompt Area and Reference Images ---
+        # --- Bottom Section ---
         self.init_bottom_section(main_layout)
 
         self.setCentralWidget(central_widget)
@@ -62,9 +59,6 @@ class MainWindow(QMainWindow):
         self.set_mode_action("transform")
         self.refresh_reference_list()
 
-    # ============================
-    # Layout and UI Setup
-    # ============================
     def init_top_section(self, parent_layout):
         top_widget = QWidget()
         top_layout = QHBoxLayout(top_widget)
@@ -101,24 +95,18 @@ class MainWindow(QMainWindow):
         self.init_reference_panel(bottom_layout)
         parent_layout.addWidget(bottom_widget, 25)
 
-    # ============================
-    # Button and Feature Actions
-    # ============================
     def init_left_buttons(self, layout):
-        # --- YOLO Detection Toggle ---
         self.detection_toggle_button = QPushButton("Detection: OFF")
         self.detection_toggle_button.setCheckable(True)
         self.detection_toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.detection_toggle_button.clicked.connect(self.toggle_detection_action)
         layout.addWidget(self.detection_toggle_button)
 
-        # --- 4k Resolution Upscaling ---
         upscale_button = QPushButton("4k Resolution")
         upscale_button.setCursor(Qt.CursorShape.PointingHandCursor)
         upscale_button.clicked.connect(self.upscale_image_action)
         layout.addWidget(upscale_button)
 
-        # --- Transform Mode and SAM Selection ---
         mode_map = {
             "Transform": "transform",
             "Quick Selection": "quick selection",
@@ -131,50 +119,36 @@ class MainWindow(QMainWindow):
             layout.addWidget(btn)
             self.mode_buttons[mode] = btn
 
-        # --- U²‑Net Auto Salient Object Selection ---
         auto_select_button = QPushButton("Salient Object Selection")
         auto_select_button.setCursor(Qt.CursorShape.PointingHandCursor)
         auto_select_button.clicked.connect(self.u2net_auto_action)
         layout.addWidget(auto_select_button)
 
-        # --- Lama Inpainting Button ---
         lama_inpaint_button = QPushButton("Lama Inpaint")
         lama_inpaint_button.setCursor(Qt.CursorShape.PointingHandCursor)
         lama_inpaint_button.clicked.connect(self.lama_inpaint_action)
         layout.addWidget(lama_inpaint_button)
 
-        # --- Control Net Processing ---
         controlnet_generate_button = QPushButton("Control Net Generate")
         controlnet_generate_button.setCursor(Qt.CursorShape.PointingHandCursor)
         controlnet_generate_button.clicked.connect(self.control_net_action)
         layout.addWidget(controlnet_generate_button)
 
-        # --- Deselect Selection ---
         deselect_button = QPushButton("Deselect Selection")
         deselect_button.setCursor(Qt.CursorShape.PointingHandCursor)
         deselect_button.clicked.connect(self.apply_action)
         layout.addWidget(deselect_button)
 
-        # --- Configuration Settings: Real-Time Update Fields ---
         self.init_config_settings(layout)
-
         layout.addStretch(1)
 
     def init_config_settings(self, layout):
         config_group = QGroupBox("Configuration Settings")
         config_layout = QVBoxLayout(config_group)
 
-        quick_selecction_config_group = QGroupBox("Salient Object Selection (U2Net) Configuration")
-        quick_selecction_layout = QVBoxLayout(quick_selecction_config_group)
-        brush_size_label = QLabel("Brush Size:")
-        quick_selecction_layout.addWidget(brush_size_label)
-
-
-        # --- U2Net Configuration Group ---
+        # --- U2Net Configuration ---
         u2net_config_group = QGroupBox("Salient Object Selection (U2Net) Configuration")
         u2net_layout = QVBoxLayout(u2net_config_group)
-
-        # U2Net Threshold
         u2net_threshold_label = QLabel("U2Net Threshold:")
         self.u2net_threshold_spin = QDoubleSpinBox()
         self.u2net_threshold_spin.setRange(0.0, 1.0)
@@ -184,7 +158,6 @@ class MainWindow(QMainWindow):
         u2net_layout.addWidget(u2net_threshold_label)
         u2net_layout.addWidget(self.u2net_threshold_spin)
 
-        # U2Net Target Size
         u2net_target_width_label = QLabel("U2Net Target Width:")
         self.u2net_target_width_spin = QSpinBox()
         self.u2net_target_width_spin.setRange(64, 1024)
@@ -201,7 +174,6 @@ class MainWindow(QMainWindow):
         u2net_layout.addWidget(u2net_target_height_label)
         u2net_layout.addWidget(self.u2net_target_height_spin)
 
-        # U2Net Bilateral Filter Parameters
         u2net_bilateral_d_label = QLabel("Bilateral Filter d:")
         self.u2net_bilateral_d_spin = QSpinBox()
         self.u2net_bilateral_d_spin.setRange(1, 20)
@@ -228,23 +200,20 @@ class MainWindow(QMainWindow):
         u2net_layout.addWidget(u2net_sigmaSpace_label)
         u2net_layout.addWidget(self.u2net_sigmaSpace_spin)
 
-        # U2Net Gaussian Kernel Size
         u2net_gaussian_kernel_label = QLabel("Gaussian Kernel Size:")
         self.u2net_gaussian_kernel_spin = QSpinBox()
         self.u2net_gaussian_kernel_spin.setRange(3, 15)
-        self.u2net_gaussian_kernel_spin.setSingleStep(2)  # only odd numbers ideally
+        self.u2net_gaussian_kernel_spin.setSingleStep(2)
         self.u2net_gaussian_kernel_spin.setValue(5)
         self.u2net_gaussian_kernel_spin.valueChanged.connect(self.on_u2net_config_changed)
         u2net_layout.addWidget(u2net_gaussian_kernel_label)
         u2net_layout.addWidget(self.u2net_gaussian_kernel_spin)
-
         config_layout.addWidget(u2net_config_group)
         u2net_config_group.setLayout(u2net_layout)
 
-        # --- SAM Configuration Group ---
+        # --- SAM Configuration ---
         sam_config_group = QGroupBox("Object Selection (SAM) Configuration")
         sam_layout = QVBoxLayout(sam_config_group)
-
         sam_points_label = QLabel("SAM Points Per Side:")
         self.sam_points_spin = QSpinBox()
         self.sam_points_spin.setRange(16, 128)
@@ -253,7 +222,6 @@ class MainWindow(QMainWindow):
         self.sam_points_spin.valueChanged.connect(self.on_sam_config_changed)
         sam_layout.addWidget(sam_points_label)
         sam_layout.addWidget(self.sam_points_spin)
-
         sam_iou_label = QLabel("SAM IoU Threshold:")
         self.sam_iou_spin = QDoubleSpinBox()
         self.sam_iou_spin.setRange(0.0, 1.0)
@@ -262,18 +230,32 @@ class MainWindow(QMainWindow):
         self.sam_iou_spin.valueChanged.connect(self.on_sam_config_changed)
         sam_layout.addWidget(sam_iou_label)
         sam_layout.addWidget(self.sam_iou_spin)
-
         config_layout.addWidget(sam_config_group)
         sam_config_group.setLayout(sam_layout)
 
+        # --- Quick Selection Configuration ---
+        quick_selection_group = QGroupBox("Quick Selection Configuration")
+        quick_selection_layout = QVBoxLayout(quick_selection_group)
+        brush_size_label = QLabel("Brush Size:")
+        self.quick_select_brush_spin = QSpinBox()
+        self.quick_select_brush_spin.setRange(1, 100)
+        self.quick_select_brush_spin.setValue(1)
+        self.quick_select_brush_spin.setSingleStep(1)
+        self.quick_select_brush_spin.valueChanged.connect(self.on_quick_select_brush_size_changed)
+        quick_selection_layout.addWidget(brush_size_label)
+        quick_selection_layout.addWidget(self.quick_select_brush_spin)
+        config_layout.addWidget(quick_selection_group)
+
         layout.addWidget(config_group)
+
+    def on_quick_select_brush_size_changed(self, value):
+        self.view.quick_select_brush_size = value
+        print(f"Quick selection brush size updated to: {value}")
 
     def on_u2net_threshold_changed(self, value):
         print(f"U2Net threshold updated to: {value:.2f}")
-        # (Optional: trigger live update of segmentation.)
 
     def on_u2net_config_changed(self, value):
-        # Update U2Net provider configuration in real time.
         target_width = self.u2net_target_width_spin.value()
         target_height = self.u2net_target_height_spin.value()
         bilateral_d = self.u2net_bilateral_d_spin.value()
@@ -287,9 +269,7 @@ class MainWindow(QMainWindow):
             bilateral_sigmaSpace=sigmaSpace,
             gaussian_kernel_size=gaussian_kernel_size
         )
-        print(f"U2Net config updated: target_size=({target_width}, {target_height}), "
-              f"bilateral_d={bilateral_d}, sigmaColor={sigmaColor}, sigmaSpace={sigmaSpace}, "
-              f"gaussian_kernel_size={gaussian_kernel_size}")
+        print(f"U2Net config updated: target_size=({target_width}, {target_height}), bilateral_d={bilateral_d}, sigmaColor={sigmaColor}, sigmaSpace={sigmaSpace}, gaussian_kernel_size={gaussian_kernel_size}")
 
     def on_sam_config_changed(self, value):
         SAMModelProvider.set_auto_mask_generator_config(
@@ -297,6 +277,7 @@ class MainWindow(QMainWindow):
             pred_iou_thresh=self.sam_iou_spin.value()
         )
         print("SAM configuration updated: auto mask generator reset.")
+
 
     def init_prompt_area(self, layout):
         prompt_layout = QVBoxLayout()
@@ -336,9 +317,6 @@ class MainWindow(QMainWindow):
         reference_vlayout.addWidget(self.reference_list_widget)
         layout.addWidget(reference_container, 1)
 
-    # ============================
-    # File Operations and Image I/O
-    # ============================
     def open_image(self):
         file_dialog = QFileDialog()
         image_file, _ = file_dialog.getOpenFileName(self, "Open Image", "", "Image Files (*.png *.jpg *.bmp)")
@@ -362,9 +340,6 @@ class MainWindow(QMainWindow):
         if file_path:
             self.view.save(file_path)
 
-    # ============================
-    # Menu Bar and Window Layout
-    # ============================
     def create_menu_bar(self):
         menubar = self.menuBar()
         file_menu = menubar.addMenu("File")
@@ -394,20 +369,13 @@ class MainWindow(QMainWindow):
     def restore_default_prompt(self):
         self.prompt_field.setPlainText(self.default_prompt)
 
-    # ============================
-    # Reference Images Management
-    # ============================
     def refresh_reference_list(self):
         self.reference_list_widget.clear()
         if os.path.exists(self.reference_dir):
             for file in os.listdir(self.reference_dir):
                 file_path = os.path.join(self.reference_dir, file)
                 if os.path.isfile(file_path):
-                    icon = QIcon(QPixmap(file_path).scaled(
-                        50, 50,
-                        Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.SmoothTransformation
-                    ))
+                    icon = QIcon(QPixmap(file_path).scaled(50, 50, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
                     item = QListWidgetItem(icon, file)
                     item.setData(Qt.ItemDataRole.UserRole, file_path)
                     self.reference_list_widget.addItem(item)
@@ -439,9 +407,6 @@ class MainWindow(QMainWindow):
                 print(f"Failed to delete {file_path}: {e}")
         self.refresh_reference_list()
 
-    # ============================
-    # YOLO Detection
-    # ============================
     def toggle_detection_action(self):
         self.detection_enabled = not self.detection_enabled
         if self.detection_enabled:
@@ -515,9 +480,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Detection Error", f"An error occurred during detection:\n{str(e)}")
 
-    # ============================
-    # 4k Resolution Upscaling
-    # ============================
     def upscale_image_action(self):
         if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
             QMessageBox.warning(self, "4k Resolution", "No image loaded for upscaling.")
@@ -544,9 +506,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Upscale Error", f"An error occurred during upscaling: {str(e)}")
 
-    # ============================
-    # U²‑Net Salient Object Segmentation
-    # ============================
     def u2net_auto_action(self):
         if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
             QMessageBox.warning(self, "Auto Salient Object", "No image loaded.")
@@ -563,9 +522,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"An error occurred:\n{str(e)}")
 
-    # ============================
-    # Transform Mode & SAM Selection
-    # ============================
     def apply_action(self):
         self.view.apply_merge()
         self.view.base_cv_image = self.view.cv_image.copy()
@@ -588,9 +544,6 @@ class MainWindow(QMainWindow):
         for mode, btn in self.mode_buttons.items():
             btn.setStyleSheet("background-color: #87CEFA;" if mode == active_mode else "")
 
-    # ============================
-    # Lama Inpainting
-    # ============================
     def lama_inpaint_action(self):
         if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
             QMessageBox.warning(self, "Lama Inpaint", "No image loaded for inpainting.")
@@ -612,8 +565,7 @@ class MainWindow(QMainWindow):
                 return
 
             if pil_image.mode != "RGBA":
-                QMessageBox.warning(self, "Lama Inpaint",
-                                    "Image does not have an alpha channel. Please provide an image with transparency.")
+                QMessageBox.warning(self, "Lama Inpaint", "Image does not have an alpha channel. Please provide an image with transparency.")
                 return
 
             alpha = pil_image.split()[3]
@@ -638,9 +590,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Lama Inpaint Error", f"An error occurred during inpainting:\n{str(e)}")
 
-    # ============================
-    # Control Net Processing
-    # ============================
     def control_net_action(self):
         if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
             QMessageBox.warning(self, "Control Net", "No image loaded for processing.")

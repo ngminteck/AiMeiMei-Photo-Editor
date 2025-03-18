@@ -1,34 +1,38 @@
 import cv2
 import numpy as np
 import torch
-from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QSizePolicy, QGraphicsPathItem
+from PyQt6.QtWidgets import (
+    QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QSizePolicy,
+    QGraphicsPathItem, QGraphicsEllipseItem
+)
 from PyQt6.QtGui import QPixmap, QPainter, QImage, QPainterPath, QPen, QColor, QBrush
-from PyQt6.QtCore import Qt, QBuffer, QIODevice
+from PyQt6.QtCore import Qt, QBuffer, QIODevice, QRectF
 from providers.sam_model_provider import SAMModelProvider
+
 
 class CustomGraphicsView(QGraphicsView):
     def __init__(self):
         super().__init__()
         self.scene = QGraphicsScene()
         self.setScene(self.scene)
-        self.main_pixmap_item = None          # Background layer item
-        self.original_pixmap = None           # Original image pixmap
-        self.scene_pixmap = None              # current scene layer pixmap (with hole)
-        self.selected_pixmap_item = None      # selected overlay item
-        self.selection_feedback_items = []    # For drawing contour feedback
+        self.main_pixmap_item = None  # Background layer item
+        self.original_pixmap = None  # Original image pixmap
+        self.scene_pixmap = None  # Current scene layer pixmap (with hole)
+        self.selected_pixmap_item = None  # Selected overlay item
+        self.selection_feedback_items = []  # For drawing contour feedback
         self.dragging = False
 
         # Modes: "transform", "object selection", "quick selection"
         self.mode = "transform"
-        self.positive_points = []             # For SAM prompt-based selection
-        self.negative_points = []             # For SAM prompt-based selection
-        self.u2net_selection_mask = None      # Binary mask from U2Net auto selection
-        self.image_shape = None               # (height, width) of current image
+        self.positive_points = []  # For SAM prompt-based selection
+        self.negative_points = []  # For SAM prompt-based selection
+        self.u2net_selection_mask = None  # Binary mask from U2Net auto selection
+        self.image_shape = None  # (height, width) of current image
 
         # OpenCV images (BGR)
-        self.cv_image = None                  # Current working image
-        self.original_cv_image = None         # Copy of loaded image
-        self.base_cv_image = None             # For re-applying detection
+        self.cv_image = None  # Current working image
+        self.original_cv_image = None  # Copy of loaded image
+        self.base_cv_image = None  # For re-applying detection
 
         # QImage (RGBA) conversion of cv_image
         self.cv_image_rgba = None
@@ -46,6 +50,11 @@ class CustomGraphicsView(QGraphicsView):
         self.checkerboard_pixmap = None
         self.detection_overlay_item = None
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+
+        # Quick selection brush size (in pixels)
+        self.quick_select_brush_size = 10
+        # Overlay item to visualize the brush area
+        self.quick_selection_overlay = None
 
     def apply_contrast_and_sharpen(self, image):
         contrast_image = cv2.convertScaleAbs(image, alpha=1.3, beta=0)
@@ -81,7 +90,8 @@ class CustomGraphicsView(QGraphicsView):
             self.checkerboard_pixmap.fill(Qt.GlobalColor.white)
             tile_painter = QPainter(self.checkerboard_pixmap)
             tile_painter.fillRect(0, 0, tile_size // 2, tile_size // 2, Qt.GlobalColor.lightGray)
-            tile_painter.fillRect(tile_size // 2, tile_size // 2, tile_size // 2, tile_size // 2, Qt.GlobalColor.lightGray)
+            tile_painter.fillRect(tile_size // 2, tile_size // 2, tile_size // 2, tile_size // 2,
+                                  Qt.GlobalColor.lightGray)
             tile_painter.end()
         brush = QBrush(self.checkerboard_pixmap)
         painter.fillRect(image_rect, brush)
@@ -149,6 +159,11 @@ class CustomGraphicsView(QGraphicsView):
             self.negative_points = []
         if mode != "transform" and self.cv_image is not None:
             self._update_cv_image_conversions()
+
+        # Remove quick selection overlay if not in quick selection mode
+        if mode != "quick selection" and self.quick_selection_overlay:
+            self.scene.removeItem(self.quick_selection_overlay)
+            self.quick_selection_overlay = None
 
     def object_selection(self):
         if self.cv_image is None:
@@ -234,24 +249,19 @@ class CustomGraphicsView(QGraphicsView):
         self.selected_pixmap_item.setZValue(10)
         self.scene.addItem(self.selected_pixmap_item)
 
-        # Clear previous feedback items; new ones will be children of selected_pixmap_item.
         self.selection_feedback_items = []
-
         outline_path = self._get_outline_path(self.u2net_selection_mask)
-
-        # Create feedback items as children of selected_pixmap_item so they move together.
         white_pen = QPen(QColor("white"), 2)
         item_white = QGraphicsPathItem(outline_path, self.selected_pixmap_item)
         item_white.setPen(white_pen)
-
         black_pen = QPen(QColor("black"), 1)
         item_black = QGraphicsPathItem(outline_path, self.selected_pixmap_item)
         item_black.setPen(black_pen)
-
         self.selection_feedback_items = [item_white, item_black]
 
     def apply_merge(self):
-        if self.selected_pixmap_item is None and (self.u2net_selection_mask is None or np.count_nonzero(self.u2net_selection_mask) == 0):
+        if self.selected_pixmap_item is None and (
+                self.u2net_selection_mask is None or np.count_nonzero(self.u2net_selection_mask) == 0):
             print("No active selection mask to merge.")
             self.selection_feedback_items = []
             return
@@ -268,14 +278,11 @@ class CustomGraphicsView(QGraphicsView):
         self.main_pixmap_item.setPixmap(merged_pixmap)
         self.scene_pixmap = merged_pixmap
 
-        # Remove the selected item (which will also remove its child feedback items)
         if self.selected_pixmap_item:
             self.scene.removeItem(self.selected_pixmap_item)
             self.selected_pixmap_item = None
 
-        # Since feedback items are children of selected_pixmap_item, clear the list without manual removal.
         self.selection_feedback_items = []
-
         self.u2net_selection_mask = np.zeros(self.image_shape, dtype=np.uint8)
         print("Merge applied: selection merged into current image.")
 
@@ -300,7 +307,8 @@ class CustomGraphicsView(QGraphicsView):
                 print(f"Added negative point: ({pos.x()}, {pos.y()})")
             self.object_selection()
         elif self.mode == "quick selection":
-            print("TODO")
+            self._quick_select_at_position(pos, event.button())
+            self._update_quick_selection_overlay(pos)
         elif self.mode == "transform" and self.selected_pixmap_item:
             self.dragging = True
             self.drag_start = pos
@@ -308,10 +316,21 @@ class CustomGraphicsView(QGraphicsView):
 
     def mouseMoveEvent(self, event):
         pos = self.mapToScene(event.pos())
-        if self.dragging and self.selected_pixmap_item:
+        if self.mode == "quick selection" and event.buttons() in [Qt.MouseButton.LeftButton,
+                                                                  Qt.MouseButton.RightButton]:
+            if event.buttons() & Qt.MouseButton.LeftButton:
+                self._quick_select_at_position(pos, Qt.MouseButton.LeftButton)
+            elif event.buttons() & Qt.MouseButton.RightButton:
+                self._quick_select_at_position(pos, Qt.MouseButton.RightButton)
+            self._update_quick_selection_overlay(pos)
+        elif self.dragging and self.selected_pixmap_item:
             delta = pos - self.drag_start
             self.selected_pixmap_item.moveBy(delta.x(), delta.y())
             self.drag_start = pos
+        else:
+            # In quick selection mode, update overlay even if no button pressed.
+            if self.mode == "quick selection":
+                self._update_quick_selection_overlay(pos)
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
@@ -324,3 +343,47 @@ class CustomGraphicsView(QGraphicsView):
         zoomOutFactor = 1 / zoomInFactor
         factor = zoomInFactor if event.angleDelta().y() > 0 else zoomOutFactor
         self.scale(factor, factor)
+
+    def _quick_select_at_position(self, pos, button):
+        """
+        Update the selection mask using a circular brush at the given scene position.
+        Left click adds (sets pixels to 255) while right click erases (sets pixels to 0).
+        """
+        if not self.main_pixmap_item or self.image_shape is None:
+            return
+
+        # Convert scene coordinates to image coordinates relative to the image's top-left.
+        offset = self.main_pixmap_item.pos()
+        x = int(pos.x() - offset.x())
+        y = int(pos.y() - offset.y())
+        if x < 0 or y < 0 or x >= self.image_shape[1] or y >= self.image_shape[0]:
+            return
+
+        brush_radius = self.quick_select_brush_size
+        Y, X = np.ogrid[:self.image_shape[0], :self.image_shape[1]]
+        dist = np.sqrt((X - x) ** 2 + (Y - y) ** 2)
+        mask_area = dist <= brush_radius
+
+        if button == Qt.MouseButton.LeftButton:
+            self.u2net_selection_mask[mask_area] = 255
+        elif button == Qt.MouseButton.RightButton:
+            self.u2net_selection_mask[mask_area] = 0
+
+        self.update_u2net_selection_display()
+
+    def _update_quick_selection_overlay(self, pos):
+        """
+        Create or update a circular overlay showing the quick selection brush area.
+        """
+        radius = self.quick_select_brush_size
+        # Create a rectangle centered at the current position.
+        rect = QRectF(pos.x() - radius, pos.y() - radius, radius * 2, radius * 2)
+        if not self.quick_selection_overlay:
+            self.quick_selection_overlay = QGraphicsEllipseItem()
+            pen = QPen(QColor("red"))
+            pen.setStyle(Qt.PenStyle.DashLine)
+            pen.setWidth(2)
+            self.quick_selection_overlay.setPen(pen)
+            self.quick_selection_overlay.setZValue(30)  # On top of other overlays.
+            self.scene.addItem(self.quick_selection_overlay)
+        self.quick_selection_overlay.setRect(rect)
