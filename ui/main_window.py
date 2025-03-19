@@ -173,7 +173,7 @@ class MainWindow(QMainWindow):
         config_layout = QVBoxLayout(config_group)
 
         # --- Enhancement Settings ---
-        enhancement_group = QGroupBox("Enhancement Settings")
+        enhancement_group = QGroupBox("Lightning Enhancement")
         enhancement_layout = QVBoxLayout(enhancement_group)
 
         lighting_brightness_label = QLabel("Brightness Factor:")
@@ -200,15 +200,20 @@ class MainWindow(QMainWindow):
         enhancement_layout.addWidget(lighting_gamma_label)
         enhancement_layout.addWidget(self.lighting_gamma_spin)
 
+        config_layout.addWidget(enhancement_group)
+
+        sharpen_group = QGroupBox("Sharpen Enhancement")
+        sharpen_layout = QVBoxLayout(sharpen_group)
+
         sharpen_label = QLabel("Sharpening Amount:")
         self.sharpen_amount_spin = QDoubleSpinBox()
         self.sharpen_amount_spin.setRange(0, 5.0)
         self.sharpen_amount_spin.setSingleStep(0.1)
         self.sharpen_amount_spin.setValue(1.0)
-        enhancement_layout.addWidget(sharpen_label)
-        enhancement_layout.addWidget(self.sharpen_amount_spin)
+        sharpen_layout.addWidget(sharpen_label)
+        sharpen_layout.addWidget(self.sharpen_amount_spin)
 
-        config_layout.addWidget(enhancement_group)
+        config_layout.addWidget(sharpen_group)
 
         # --- Quick Selection Configuration ---
         quick_selection_group = QGroupBox("Quick Selection Configuration")
