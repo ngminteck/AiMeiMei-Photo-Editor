@@ -116,6 +116,12 @@ class MainWindow(QMainWindow):
         enhance_lighting_button.clicked.connect(self.enhance_lighting_action)
         button_layout.addWidget(enhance_lighting_button)
 
+        # In your init_left_buttons() method, after adding the configuration widget:
+        apply_filter_button = QPushButton("Apply Filter")
+        apply_filter_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        apply_filter_button.clicked.connect(self.apply_filter_action)
+        button_layout.addWidget(apply_filter_button, 1)
+
         sharpen_image_button = QPushButton("Sharpen Image")
         sharpen_image_button.setCursor(Qt.CursorShape.PointingHandCursor)
         sharpen_image_button.clicked.connect(self.sharpen_image_action)
@@ -293,7 +299,8 @@ class MainWindow(QMainWindow):
         self.u2net_threshold_spin = QDoubleSpinBox()
         self.u2net_threshold_spin.setRange(0.0, 1.0)
         self.u2net_threshold_spin.setSingleStep(0.01)
-        self.u2net_threshold_spin.setValue(0.05)
+        # Updated default value to 0.3 for improved segmentation quality.
+        self.u2net_threshold_spin.setValue(0.3)
         self.u2net_threshold_spin.valueChanged.connect(self.on_u2net_threshold_changed)
         u2net_layout.addWidget(u2net_threshold_label)
         u2net_layout.addWidget(self.u2net_threshold_spin)
@@ -606,34 +613,32 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Detection Error", f"An error occurred during detection:\n{str(e)}")
 
     def update_score(self):
-        """
-        Recalculate and update the aesthetic score for the current image scene.
-        This method uses self.view.cv_image and computes the focus object via YOLO.
-        """
-        if self.view.cv_image is None:
+        try:
+            if self.view.cv_image is None or len(self.view.cv_image.shape) < 3:
+                self.score_label.setText(
+                    "Aesthetic Score: N/A | Position: N/A | Angle: N/A | Lighting: N/A | Focus: N/A")
+                return
+
+            frame = self.view.cv_image
+            objects = detect_objects(frame)
+            if objects:
+                grouped_clusters = group_objects(objects)
+                focus_object = select_focus_object(grouped_clusters, frame.shape)
+            else:
+                focus_object = None
+
+            score_data = calculate_photo_score(frame, [focus_object] if focus_object else [])
+            new_text = (
+                f"Aesthetic Score: {score_data['Final Score']} | "
+                f"Position: {score_data['Position']} | "
+                f"Angle: {score_data['Angle']} | "
+                f"Lighting: {score_data['Lighting']} | "
+                f"Focus: {score_data['Focus']}"
+            )
+            self.score_label.setText(new_text)
+        except Exception as e:
+            print("Error in update_score:", e)
             self.score_label.setText("Aesthetic Score: N/A | Position: N/A | Angle: N/A | Lighting: N/A | Focus: N/A")
-            return
-
-        frame = self.view.cv_image
-        # Run YOLO detection on the frame:
-        objects = detect_objects(frame)
-        if objects:
-            grouped_clusters = group_objects(objects)
-            focus_object = select_focus_object(grouped_clusters, frame.shape)
-        else:
-            focus_object = None
-
-        # Calculate the photo score using the current frame and the detected focus object.
-        score_data = calculate_photo_score(frame, [focus_object] if focus_object else [])
-        # Format the results for the top panel. Adjust the text as desired.
-        new_text = (
-            f"Aesthetic Score: {score_data['Final Score']} | "
-            f"Position: {score_data['Position']} | "
-            f"Angle: {score_data['Angle']} | "
-            f"Lighting: {score_data['Lighting']} | "
-            f"Focus: {score_data['Focus']}"
-        )
-        self.score_label.setText(new_text)
 
     def updateLightingPreview(self):
         # Ensure a base image exists
@@ -690,6 +695,14 @@ class MainWindow(QMainWindow):
         self.view.base_cv_image = self.view.cv_image.copy()
         QMessageBox.information(self, "Enhance Lighting", "Lighting enhancement applied.")
 
+    def apply_filter_action(self):
+        if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
+            QMessageBox.warning(self, "Apply Filter", "No filter preview available.")
+            return
+        # Commit the preview effect by updating the base image permanently.
+        self.view.base_cv_image = self.view.cv_image.copy()
+        QMessageBox.information(self, "Apply Filter", "Filter applied.")
+
     def sharpen_image_action(self):
         if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
             QMessageBox.warning(self, "Sharpen Image", "No image loaded for sharpening.")
@@ -728,6 +741,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Auto Salient Object", "No image loaded.")
             return
         try:
+            # Using the U2Net threshold value from the configuration (default now 0.3)
             threshold_value = self.u2net_threshold_spin.value()
             mask = U2NetProvider.get_salient_mask(self.view.cv_image, threshold=threshold_value)
             self.view.u2net_selection_mask = mask
@@ -740,10 +754,18 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"An error occurred:\n{str(e)}")
 
     def apply_action(self):
+        # Temporarily disable the score callback to avoid it firing during merge
+        saved_callback = self.view.score_update_callback
+        self.view.score_update_callback = None
+
         self.view.apply_merge()
         self.view.base_cv_image = self.view.cv_image.copy()
+
         if self.detection_enabled:
             self.update_detection()
+
+        # Re-enable the callback after merge is complete
+        self.view.score_update_callback = self.update_score
 
     def set_mode_action(self, mode: str):
         self.view.set_mode(mode)

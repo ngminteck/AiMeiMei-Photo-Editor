@@ -256,6 +256,14 @@ class CustomGraphicsView(QGraphicsView):
         if self.cv_image is None or self.u2net_selection_mask is None:
             return
 
+        # Clear previous overlay items to prevent double overlay
+        if self.selected_pixmap_item:
+            self.scene.removeItem(self.selected_pixmap_item)
+            self.selected_pixmap_item = None
+        for item in self.selection_feedback_items:
+            self.scene.removeItem(item)
+        self.selection_feedback_items = []
+
         bg_rgba = self.cv_image_rgba.copy()
         bg_alpha = np.where(self.u2net_selection_mask == 255, 0, 255).astype(np.uint8)
         bg_rgba[:, :, 3] = bg_alpha
@@ -279,10 +287,10 @@ class CustomGraphicsView(QGraphicsView):
 
         self.selection_feedback_items = []
         outline_path = self._get_outline_path(self.u2net_selection_mask)
-        white_pen = QPen(QColor("white"), 4)
+        white_pen = QPen(QColor("white"), 2)
         item_white = QGraphicsPathItem(outline_path, self.selected_pixmap_item)
         item_white.setPen(white_pen)
-        black_pen = QPen(QColor("black"), 2)
+        black_pen = QPen(QColor("black"), 1)
         item_black = QGraphicsPathItem(outline_path, self.selected_pixmap_item)
         item_black.setPen(black_pen)
         self.selection_feedback_items = [item_white, item_black]

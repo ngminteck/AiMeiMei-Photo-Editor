@@ -4,6 +4,8 @@ from PyQt6.QtGui import QPixmap, QImage, QIcon
 from PyQt6.QtCore import Qt, QSize
 from PIL import Image, ImageDraw
 from PIL.ImageQt import ImageQt
+import cv2
+import numpy as np
 
 class FilterPanelWidget(QWidget):
     def __init__(self, view, parent=None):
@@ -144,14 +146,41 @@ class FilterPanelWidget(QWidget):
             self.layout.addWidget(filterButton)
 
     def OnFilterSelect(self):
-        """Apply the selected filter to the original image and update the main view."""
+        """Apply the selected filter as a live preview using the current base image."""
         button = self.sender()
         filterName = button.objectName()
         filterFunction = self.available_filters.get(filterName)
         if not filterFunction:
             return
 
-        filtered = self.get_filtered_image_with_alpha(self.original_image.copy(), filterFunction)
+        # Instead of using self.original_image, use the current base image from the view.
+        if not hasattr(self.view, 'base_cv_image') or self.view.base_cv_image is None:
+            return
+
+        # Convert the current base_cv_image (assumed to be in BGR or BGRA) to a PIL image.
+        cv_img = self.view.base_cv_image
+        if cv_img.ndim < 3:
+            # If image is grayscale, convert to RGB.
+            pil_img = Image.fromarray(cv_img).convert("RGB")
+        elif cv_img.shape[2] == 3:
+            # BGR to RGB
+            rgb = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+            pil_img = Image.fromarray(rgb)
+        elif cv_img.shape[2] == 4:
+            # BGRA to RGBA
+            rgba = cv2.cvtColor(cv_img, cv2.COLOR_BGRA2RGBA)
+            pil_img = Image.fromarray(rgba)
+        else:
+            pil_img = Image.fromarray(cv_img)
+
+        # Apply the pilgram filter while preserving alpha
+        try:
+            filtered = self.get_filtered_image_with_alpha(pil_img, filterFunction)
+        except Exception as e:
+            print(f"Error applying filter {filterName}: {e}")
+            filtered = pil_img
+
+        # Convert the filtered PIL image back to QPixmap for preview
         qpixmap_filtered = self.PILImageToQPixmap(filtered)
         if self.view.main_pixmap_item is not None:
             self.view.main_pixmap_item.setPixmap(qpixmap_filtered)
@@ -159,3 +188,12 @@ class FilterPanelWidget(QWidget):
             from PyQt6.QtWidgets import QGraphicsPixmapItem
             self.view.main_pixmap_item = QGraphicsPixmapItem(qpixmap_filtered)
             self.view.scene.addItem(self.view.main_pixmap_item)
+
+        # Optionally, update the view's working image (preview) as well:
+        # Convert the filtered image back to cv2 format and update self.view.cv_image.
+        filtered_np = np.array(filtered.convert("RGB"))
+        # If the original had an alpha channel, you can handle it accordingly.
+        # Here we assume RGB output.
+        filtered_cv = cv2.cvtColor(filtered_np, cv2.COLOR_RGB2BGR)
+        self.view.cv_image = filtered_cv
+
