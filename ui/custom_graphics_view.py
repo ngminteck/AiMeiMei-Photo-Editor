@@ -15,10 +15,12 @@ class CustomGraphicsView(QGraphicsView):
         super().__init__()
         self.scene = QGraphicsScene()
         self.setScene(self.scene)
-        self.main_pixmap_item = None  # Background layer item
         self.original_pixmap = None  # Original image pixmap
-        self.scene_pixmap = None  # Current scene layer pixmap (with hole)
+
         self.selected_pixmap_item = None  # Selected overlay item
+        self.current_background_pixmap = None  # Current scene layer pixmap (with hole)
+        self.background_pixmap_item = None  # Background layer item
+
         self.selection_feedback_items = []  # For drawing contour feedback
         self.dragging = False
 
@@ -30,11 +32,11 @@ class CustomGraphicsView(QGraphicsView):
         self.image_shape = None  # (height, width) of current image
 
         # OpenCV images (BGR)
-        self.cv_image = None  # Current working image
+        self.current_cv_image = None  # Current working image
         self.original_cv_image = None  # Copy of loaded image
-        self.base_cv_image = None  # For re-applying detection
+        self.detection_cv_image = None  # For re-applying detection
 
-        # QImage (RGBA) conversion of cv_image
+        # QImage (RGBA) conversion of current_cv_image
         self.cv_image_rgba = None
 
         # Enhanced image for SAM selection
@@ -71,16 +73,16 @@ class CustomGraphicsView(QGraphicsView):
         return sharpened
 
     def _update_cv_image_conversions(self):
-        if self.cv_image is None or len(self.cv_image.shape) < 3:
+        if self.current_cv_image is None or len(self.current_cv_image.shape) < 3:
             return
-        self.image_shape = (self.cv_image.shape[0], self.cv_image.shape[1])
-        if self.cv_image.shape[2] == 4:
-            self.cv_image_rgba = cv2.cvtColor(self.cv_image, cv2.COLOR_BGRA2RGBA)
+        self.image_shape = (self.current_cv_image.shape[0], self.current_cv_image.shape[1])
+        if self.current_cv_image.shape[2] == 4:
+            self.cv_image_rgba = cv2.cvtColor(self.current_cv_image, cv2.COLOR_BGRA2RGBA)
         else:
-            self.cv_image_rgba = cv2.cvtColor(self.cv_image, cv2.COLOR_BGR2RGBA)
+            self.cv_image_rgba = cv2.cvtColor(self.current_cv_image, cv2.COLOR_BGR2RGBA)
 
-        self.sam_cv_image = self.apply_contrast_and_sharpen(self.cv_image)
-        if self.cv_image.shape[2] == 4:
+        self.sam_cv_image = self.apply_contrast_and_sharpen(self.current_cv_image)
+        if self.current_cv_image.shape[2] == 4:
             self.sam_cv_image_rgba = cv2.cvtColor(self.sam_cv_image, cv2.COLOR_BGRA2RGBA)
             self.sam_cv_image_rgb = cv2.cvtColor(self.sam_cv_image, cv2.COLOR_BGRA2RGB)
         else:
@@ -92,8 +94,8 @@ class CustomGraphicsView(QGraphicsView):
             self.score_update_callback()
 
     def drawBackground(self, painter, rect):
-        if self.main_pixmap_item:
-            image_rect = self.main_pixmap_item.boundingRect()
+        if self.background_pixmap_item:
+            image_rect = self.background_pixmap_item.boundingRect()
         else:
             image_rect = rect
         tile_size = max(20, int(min(image_rect.width(), image_rect.height()) / 40))
@@ -110,7 +112,7 @@ class CustomGraphicsView(QGraphicsView):
 
     def save(self, filepath=None):
         if filepath:
-            self.main_pixmap_item.pixmap().save(filepath, None, 100)
+            self.background_pixmap_item.pixmap().save(filepath, None, 100)
 
     def clear_detection(self):
         if self.detection_overlay_item:
@@ -124,7 +126,7 @@ class CustomGraphicsView(QGraphicsView):
 
         self.clear_detection()
         self.scene.clear()
-        self.main_pixmap_item = None
+        self.background_pixmap_item = None
         self.selected_pixmap_item = None
         for item in self.selection_feedback_items:
             self.scene.removeItem(item)
@@ -142,16 +144,16 @@ class CustomGraphicsView(QGraphicsView):
             self.clone_source_overlay = None
 
         self.image_path = image_path
-        self.cv_image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
-        if self.cv_image is None:
+        self.current_cv_image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+        if self.current_cv_image is None:
             print(f"Error: Could not load image from {image_path}")
             return
 
-        self.original_cv_image = self.cv_image.copy()
-        self.base_cv_image = self.cv_image.copy()
+        self.original_cv_image = self.current_cv_image.copy()
+        self.detection_cv_image = self.current_cv_image.copy()
 
         if not image_path.lower().endswith('.png'):
-            ret, buf = cv2.imencode('.png', self.cv_image)
+            ret, buf = cv2.imencode('.png', self.current_cv_image)
             if ret:
                 png_bytes = buf.tobytes()
                 self.original_pixmap = QPixmap()
@@ -162,13 +164,13 @@ class CustomGraphicsView(QGraphicsView):
         else:
             self.original_pixmap = QPixmap(image_path)
 
-        self.scene_pixmap = self.original_pixmap.copy()
+        self.current_background_pixmap = self.original_pixmap.copy()
         self._update_cv_image_conversions()
         self.u2net_selection_mask = np.zeros(self.image_shape, dtype=np.uint8)
 
-        self.main_pixmap_item = QGraphicsPixmapItem(self.original_pixmap)
-        self.scene.addItem(self.main_pixmap_item)
-        self.setSceneRect(self.main_pixmap_item.boundingRect())
+        self.background_pixmap_item = QGraphicsPixmapItem(self.original_pixmap)
+        self.scene.addItem(self.background_pixmap_item)
+        self.setSceneRect(self.background_pixmap_item.boundingRect())
         self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def set_mode(self, mode):
@@ -177,7 +179,7 @@ class CustomGraphicsView(QGraphicsView):
         if mode != "selection":
             self.positive_points = []
             self.negative_points = []
-        if mode != "transform" and self.cv_image is not None:
+        if mode != "transform" and self.current_cv_image is not None:
             self._update_cv_image_conversions()
 
         # Remove overlays if switching from clone stamp or quick selection mode.
@@ -193,8 +195,86 @@ class CustomGraphicsView(QGraphicsView):
                 self.clone_source_overlay = None
             self.clone_offset = None
 
+        # ---------------------
+        # Mouse Event Handling
+        # ---------------------
+
+    def mousePressEvent(self, event):
+        pos = self.mapToScene(event.pos())
+        if self.mode == "object selection":
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.positive_points.append([pos.x(), pos.y()])
+                print(f"Added positive point: ({pos.x()}, {pos.y()})")
+            elif event.button() == Qt.MouseButton.RightButton:
+                self.negative_points.append([pos.x(), pos.y()])
+                print(f"Added negative point: ({pos.x()}, {pos.y()})")
+            self.object_selection()
+        elif self.mode == "quick selection":
+            self._quick_select_at_position(pos, event.button())
+            self._update_quick_selection_overlay(pos)
+        elif self.mode == "clone stamp":
+            if event.button() == Qt.MouseButton.RightButton:
+                # Set clone source position
+                offset = self.background_pixmap_item.pos()
+                sample_x = int(pos.x() - offset.x())
+                sample_y = int(pos.y() - offset.y())
+                self.clone_source_point = (sample_x, sample_y)
+                self.clone_offset = None  # Reset offset so it is computed on next left click
+                self._update_clone_source_overlay(pos)
+                print(f"Clone source set at: ({sample_x}, {sample_y})")
+            elif event.button() == Qt.MouseButton.LeftButton:
+                if self.clone_source_point is None:
+                    print("Clone source not set. Right-click to set it.")
+                    return
+                if self.clone_offset is None:
+                    offset = self.background_pixmap_item.pos()
+                    dest_x = int(pos.x() - offset.x())
+                    dest_y = int(pos.y() - offset.y())
+                    self.clone_offset = (self.clone_source_point[0] - dest_x, self.clone_source_point[1] - dest_y)
+                    print(f"Clone offset computed as: {self.clone_offset}")
+                self._clone_stamp_at_position(pos)
+                self._update_clone_stamp_overlay(pos)
+        elif self.mode == "transform" and self.selected_pixmap_item:
+            self.dragging = True
+            self.drag_start = pos
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        pos = self.mapToScene(event.pos())
+        if self.mode == "quick selection" and event.buttons() in [Qt.MouseButton.LeftButton,
+                                                                  Qt.MouseButton.RightButton]:
+            if event.buttons() & Qt.MouseButton.LeftButton:
+                self._quick_select_at_position(pos, Qt.MouseButton.LeftButton)
+            elif event.buttons() & Qt.MouseButton.RightButton:
+                self._quick_select_at_position(pos, Qt.MouseButton.RightButton)
+            self._update_quick_selection_overlay(pos)
+        elif self.mode == "clone stamp" and (event.buttons() & Qt.MouseButton.LeftButton):
+            self._clone_stamp_at_position(pos)
+            self._update_clone_stamp_overlay(pos)
+        elif self.dragging and self.selected_pixmap_item:
+            delta = pos - self.drag_start
+            self.selected_pixmap_item.moveBy(delta.x(), delta.y())
+            self.drag_start = pos
+        else:
+            if self.mode == "quick selection":
+                self._update_quick_selection_overlay(pos)
+            if self.mode == "clone stamp":
+                self._update_clone_stamp_overlay(pos)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.dragging = False
+        super().mouseReleaseEvent(event)
+
+    def wheelEvent(self, event):
+        zoomInFactor = 1.25
+        zoomOutFactor = 1 / zoomInFactor
+        factor = zoomInFactor if event.angleDelta().y() > 0 else zoomOutFactor
+        self.scale(factor, factor)
+
     def object_selection(self):
-        if self.cv_image is None:
+        if self.current_cv_image is None:
             print("No image loaded")
             return
         if not self.positive_points and not self.negative_points:
@@ -253,7 +333,7 @@ class CustomGraphicsView(QGraphicsView):
         return path
 
     def update_u2net_selection_display(self):
-        if self.cv_image is None or self.u2net_selection_mask is None:
+        if self.current_cv_image is None or self.u2net_selection_mask is None:
             return
 
         # Clear previous overlay items to prevent double overlay
@@ -272,7 +352,7 @@ class CustomGraphicsView(QGraphicsView):
         bytes_per_line = ch * w
         bg_qimage = QImage(bg_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
         bg_pixmap = QPixmap.fromImage(bg_qimage)
-        self.main_pixmap_item.setPixmap(bg_pixmap)
+        self.background_pixmap_item.setPixmap(bg_pixmap)
 
         sel_rgba = self.cv_image_rgba.copy()
         sel_rgba[self.u2net_selection_mask != 255] = [0, 0, 0, 0]
@@ -302,7 +382,7 @@ class CustomGraphicsView(QGraphicsView):
             self.selection_feedback_items = []
             return
 
-        composite_image = self.main_pixmap_item.pixmap().toImage()
+        composite_image = self.background_pixmap_item.pixmap().toImage()
         painter = QPainter(composite_image)
         if self.selected_pixmap_item:
             selected_pixmap = self.selected_pixmap_item.pixmap()
@@ -311,8 +391,8 @@ class CustomGraphicsView(QGraphicsView):
         painter.end()
 
         merged_pixmap = QPixmap.fromImage(composite_image)
-        self.main_pixmap_item.setPixmap(merged_pixmap)
-        self.scene_pixmap = merged_pixmap
+        self.background_pixmap_item.setPixmap(merged_pixmap)
+        self.current_background_pixmap = merged_pixmap
 
         if self.selected_pixmap_item:
             self.scene.removeItem(self.selected_pixmap_item)
@@ -326,96 +406,19 @@ class CustomGraphicsView(QGraphicsView):
         buffer.open(QIODevice.OpenModeFlag.ReadWrite)
         merged_pixmap.save(buffer, "PNG")
         arr = np.frombuffer(buffer.data(), np.uint8)
-        self.cv_image = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
+        self.current_cv_image = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
         buffer.close()
 
         self._update_cv_image_conversions()
-        self.base_cv_image = self.cv_image.copy()
+        self.detection_cv_image = self.current_cv_image.copy()
 
     # ---------------------
-    # Mouse Event Handling
-    # ---------------------
-    def mousePressEvent(self, event):
-        pos = self.mapToScene(event.pos())
-        if self.mode == "object selection":
-            if event.button() == Qt.MouseButton.LeftButton:
-                self.positive_points.append([pos.x(), pos.y()])
-                print(f"Added positive point: ({pos.x()}, {pos.y()})")
-            elif event.button() == Qt.MouseButton.RightButton:
-                self.negative_points.append([pos.x(), pos.y()])
-                print(f"Added negative point: ({pos.x()}, {pos.y()})")
-            self.object_selection()
-        elif self.mode == "quick selection":
-            self._quick_select_at_position(pos, event.button())
-            self._update_quick_selection_overlay(pos)
-        elif self.mode == "clone stamp":
-            if event.button() == Qt.MouseButton.RightButton:
-                # Set clone source position
-                offset = self.main_pixmap_item.pos()
-                sample_x = int(pos.x() - offset.x())
-                sample_y = int(pos.y() - offset.y())
-                self.clone_source_point = (sample_x, sample_y)
-                self.clone_offset = None  # Reset offset so it is computed on next left click
-                self._update_clone_source_overlay(pos)
-                print(f"Clone source set at: ({sample_x}, {sample_y})")
-            elif event.button() == Qt.MouseButton.LeftButton:
-                if self.clone_source_point is None:
-                    print("Clone source not set. Right-click to set it.")
-                    return
-                if self.clone_offset is None:
-                    offset = self.main_pixmap_item.pos()
-                    dest_x = int(pos.x() - offset.x())
-                    dest_y = int(pos.y() - offset.y())
-                    self.clone_offset = (self.clone_source_point[0] - dest_x, self.clone_source_point[1] - dest_y)
-                    print(f"Clone offset computed as: {self.clone_offset}")
-                self._clone_stamp_at_position(pos)
-                self._update_clone_stamp_overlay(pos)
-        elif self.mode == "transform" and self.selected_pixmap_item:
-            self.dragging = True
-            self.drag_start = pos
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        pos = self.mapToScene(event.pos())
-        if self.mode == "quick selection" and event.buttons() in [Qt.MouseButton.LeftButton,
-                                                                  Qt.MouseButton.RightButton]:
-            if event.buttons() & Qt.MouseButton.LeftButton:
-                self._quick_select_at_position(pos, Qt.MouseButton.LeftButton)
-            elif event.buttons() & Qt.MouseButton.RightButton:
-                self._quick_select_at_position(pos, Qt.MouseButton.RightButton)
-            self._update_quick_selection_overlay(pos)
-        elif self.mode == "clone stamp" and (event.buttons() & Qt.MouseButton.LeftButton):
-            self._clone_stamp_at_position(pos)
-            self._update_clone_stamp_overlay(pos)
-        elif self.dragging and self.selected_pixmap_item:
-            delta = pos - self.drag_start
-            self.selected_pixmap_item.moveBy(delta.x(), delta.y())
-            self.drag_start = pos
-        else:
-            if self.mode == "quick selection":
-                self._update_quick_selection_overlay(pos)
-            if self.mode == "clone stamp":
-                self._update_clone_stamp_overlay(pos)
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.dragging = False
-        super().mouseReleaseEvent(event)
-
-    def wheelEvent(self, event):
-        zoomInFactor = 1.25
-        zoomOutFactor = 1 / zoomInFactor
-        factor = zoomInFactor if event.angleDelta().y() > 0 else zoomOutFactor
-        self.scale(factor, factor)
-
-    # ---------------------
-    # Quick Selection (unchanged)
+    # Quick Selection
     # ---------------------
     def _quick_select_at_position(self, pos, button):
-        if not self.main_pixmap_item or self.image_shape is None:
+        if not self.background_pixmap_item or self.image_shape is None:
             return
-        offset = self.main_pixmap_item.pos()
+        offset = self.background_pixmap_item.pos()
         x = int(pos.x() - offset.x())
         y = int(pos.y() - offset.y())
         if x < 0 or y < 0 or x >= self.image_shape[1] or y >= self.image_shape[0]:
@@ -451,9 +454,9 @@ class CustomGraphicsView(QGraphicsView):
         In clone stamp mode, copy a patch from the source region to the destination.
         The source region is determined by the stored clone_offset.
         """
-        if not self.main_pixmap_item or self.image_shape is None or self.clone_offset is None:
+        if not self.background_pixmap_item or self.image_shape is None or self.clone_offset is None:
             return
-        offset = self.main_pixmap_item.pos()
+        offset = self.background_pixmap_item.pos()
         dest_x = int(pos.x() - offset.x())
         dest_y = int(pos.y() - offset.y())
         brush_radius = self.clone_stamp_brush_size
@@ -467,7 +470,7 @@ class CustomGraphicsView(QGraphicsView):
         src_y1 = max(src_y - half_patch, 0)
         src_x2 = min(src_x + half_patch, img_w)
         src_y2 = min(src_y + half_patch, img_h)
-        patch = self.cv_image[src_y1:src_y2, src_x1:src_x2].copy()
+        patch = self.current_cv_image[src_y1:src_y2, src_x1:src_x2].copy()
         # Define destination boundaries
         dest_x1 = max(dest_x - half_patch, 0)
         dest_y1 = max(dest_y - half_patch, 0)
@@ -479,13 +482,13 @@ class CustomGraphicsView(QGraphicsView):
         h = min(patch_h, dest_h)
         w = min(patch_w, dest_w)
         if h > 0 and w > 0:
-            self.cv_image[dest_y1:dest_y1 + h, dest_x1:dest_x1 + w] = patch[:h, :w]
+            self.current_cv_image[dest_y1:dest_y1 + h, dest_x1:dest_x1 + w] = patch[:h, :w]
             self._update_cv_image_conversions()
             h_img, w_img, ch = self.cv_image_rgba.shape
             bytes_per_line = ch * w_img
             qimage = QImage(self.cv_image_rgba.data, w_img, h_img, bytes_per_line, QImage.Format.Format_RGBA8888)
             pixmap = QPixmap.fromImage(qimage)
-            self.main_pixmap_item.setPixmap(pixmap)
+            self.background_pixmap_item.setPixmap(pixmap)
 
     def _update_clone_stamp_overlay(self, pos):
         """

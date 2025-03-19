@@ -543,7 +543,7 @@ class MainWindow(QMainWindow):
         self.detection_enabled = not self.detection_enabled
         if self.detection_enabled:
             self.detection_toggle_button.setText("Detection: ON")
-            if hasattr(self.view, 'base_cv_image') and self.view.base_cv_image is not None:
+            if hasattr(self.view, 'detection_cv_image') and self.view.detection_cv_image is not None:
                 self.update_detection()
         else:
             self.detection_toggle_button.setText("Detection: OFF")
@@ -552,10 +552,10 @@ class MainWindow(QMainWindow):
                 self.view.detection_overlay_item = None
 
     def update_detection(self):
-        if not hasattr(self.view, 'base_cv_image') or self.view.base_cv_image is None:
+        if not hasattr(self.view, 'detection_cv_image') or self.view.detection_cv_image is None:
             return
 
-        frame = self.view.base_cv_image.copy()
+        frame = self.view.detection_cv_image.copy()
         height, width = frame.shape[:2]
         has_alpha = (frame.ndim == 3 and frame.shape[2] == 4)
         alpha_channel = frame[:, :, 3] if has_alpha else None
@@ -607,19 +607,19 @@ class MainWindow(QMainWindow):
                 self.view.detection_overlay_item.setZValue(20)
                 self.view.detection_overlay_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
                 self.view.scene.addItem(self.view.detection_overlay_item)
-                self.view.detection_overlay_item.setPos(self.view.main_pixmap_item.pos())
+                self.view.detection_overlay_item.setPos(self.view.background_pixmap_item.pos())
 
         except Exception as e:
             QMessageBox.critical(self, "Detection Error", f"An error occurred during detection:\n{str(e)}")
 
     def update_score(self):
         try:
-            if self.view.cv_image is None or len(self.view.cv_image.shape) < 3:
+            if self.view.current_cv_image is None or len(self.view.current_cv_image.shape) < 3:
                 self.score_label.setText(
                     "Aesthetic Score: N/A | Position: N/A | Angle: N/A | Lighting: N/A | Focus: N/A")
                 return
 
-            frame = self.view.cv_image
+            frame = self.view.current_cv_image
             objects = detect_objects(frame)
             if objects:
                 grouped_clusters = group_objects(objects)
@@ -642,7 +642,7 @@ class MainWindow(QMainWindow):
 
     def updateLightingPreview(self):
         # Ensure a base image exists
-        if not hasattr(self.view, 'base_cv_image') or self.view.base_cv_image is None:
+        if not hasattr(self.view, 'detection_cv_image') or self.view.detection_cv_image is None:
             return
 
         brightness = self.lighting_brightness_slider.value() / 100.0
@@ -650,7 +650,7 @@ class MainWindow(QMainWindow):
         gamma = self.lighting_gamma_slider.value() / 100.0
 
         # Start with the unmodified base image and compute the preview
-        image = self.view.base_cv_image.astype(np.float32) / 255.0
+        image = self.view.detection_cv_image.astype(np.float32) / 255.0
         # Apply gamma correction
         image = np.power(image, 1.0 / gamma)
         # Scale brightness and contrast
@@ -658,7 +658,7 @@ class MainWindow(QMainWindow):
         preview = (image * 255).astype(np.uint8)
 
         # Update the current working image (preview only)
-        self.view.cv_image = preview
+        self.view.current_cv_image = preview
         self.view._update_cv_image_conversions()
 
         # Update the QPixmap to show preview
@@ -666,67 +666,67 @@ class MainWindow(QMainWindow):
         bytes_per_line = ch * w
         qimage = QImage(self.view.cv_image_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
         pixmap = QPixmap.fromImage(qimage)
-        self.view.main_pixmap_item.setPixmap(pixmap)
+        self.view.background_pixmap_item.setPixmap(pixmap)
 
     def updateSharpenPreview(self):
-        if not hasattr(self.view, 'base_cv_image') or self.view.base_cv_image is None:
+        if not hasattr(self.view, 'detection_cv_image') or self.view.detection_cv_image is None:
             return
 
         sharpen_amount = self.sharpen_slider.value() / 10.0
-        image = self.view.base_cv_image.astype(np.float32)
+        image = self.view.detection_cv_image.astype(np.float32)
         blurred = cv2.GaussianBlur(image, (0, 0), sigmaX=3)
         sharpened = cv2.addWeighted(image, 1 + sharpen_amount, blurred, -sharpen_amount, 0)
         sharpened = np.clip(sharpened, 0, 255).astype(np.uint8)
 
-        self.view.cv_image = sharpened
+        self.view.current_cv_image = sharpened
         self.view._update_cv_image_conversions()
 
         h, w, ch = self.view.cv_image_rgba.shape
         bytes_per_line = ch * w
         qimage = QImage(self.view.cv_image_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
         pixmap = QPixmap.fromImage(qimage)
-        self.view.main_pixmap_item.setPixmap(pixmap)
+        self.view.background_pixmap_item.setPixmap(pixmap)
 
     def enhance_lighting_action(self):
-        if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
+        if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             QMessageBox.warning(self, "Enhance Lighting", "No image loaded for enhancement.")
             return
         # Commit the preview effect by updating the base image.
-        self.view.base_cv_image = self.view.cv_image.copy()
+        self.view.detection_cv_image = self.view.current_cv_image.copy()
         QMessageBox.information(self, "Enhance Lighting", "Lighting enhancement applied.")
 
     def apply_filter_action(self):
-        if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
+        if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             QMessageBox.warning(self, "Apply Filter", "No filter preview available.")
             return
         # Commit the preview effect by updating the base image permanently.
-        self.view.base_cv_image = self.view.cv_image.copy()
+        self.view.detection_cv_image = self.view.current_cv_image.copy()
         QMessageBox.information(self, "Apply Filter", "Filter applied.")
 
     def sharpen_image_action(self):
-        if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
+        if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             QMessageBox.warning(self, "Sharpen Image", "No image loaded for sharpening.")
             return
-        self.view.base_cv_image = self.view.cv_image.copy()
+        self.view.detection_cv_image = self.view.current_cv_image.copy()
         QMessageBox.information(self, "Sharpen Image", "Image sharpening applied.")
 
     def upscale_image_action(self):
-        if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
+        if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             QMessageBox.warning(self, "4k Resolution", "No image loaded for upscaling.")
             return
         try:
-            current_image = self.view.cv_image.copy()
+            current_image = self.view.current_cv_image.copy()
             upscaled_image = RealESRGANProvider.upscale(current_image)
-            self.view.cv_image = upscaled_image
-            self.view.base_cv_image = upscaled_image.copy()
+            self.view.current_cv_image = upscaled_image
+            self.view.detection_cv_image = upscaled_image.copy()
             self.view._update_cv_image_conversions()
 
             h, w, ch = self.view.cv_image_rgba.shape
             bytes_per_line = ch * w
             qimage = QImage(self.view.cv_image_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
             pixmap = QPixmap.fromImage(qimage)
-            self.view.main_pixmap_item.setPixmap(pixmap)
-            self.view.setSceneRect(self.view.main_pixmap_item.boundingRect())
+            self.view.background_pixmap_item.setPixmap(pixmap)
+            self.view.setSceneRect(self.view.background_pixmap_item.boundingRect())
             self.view.fitInView(self.view.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
             QMessageBox.information(self, "4k Resolution", "Image successfully upscaled.")
@@ -737,13 +737,13 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Upscale Error", f"An error occurred during upscaling: {str(e)}")
 
     def u2net_auto_action(self):
-        if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
+        if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             QMessageBox.warning(self, "Auto Salient Object", "No image loaded.")
             return
         try:
             # Using the U2Net threshold value from the configuration (default now 0.3)
             threshold_value = self.u2net_threshold_spin.value()
-            mask = U2NetProvider.get_salient_mask(self.view.cv_image, threshold=threshold_value)
+            mask = U2NetProvider.get_salient_mask(self.view.current_cv_image, threshold=threshold_value)
             self.view.u2net_selection_mask = mask
             self.view.update_u2net_selection_display()
             QMessageBox.information(self, "Auto Salient Object", "Salient object segmentation completed.")
@@ -759,7 +759,7 @@ class MainWindow(QMainWindow):
         self.view.score_update_callback = None
 
         self.view.apply_merge()
-        self.view.base_cv_image = self.view.cv_image.copy()
+        self.view.detection_cv_image = self.view.current_cv_image.copy()
 
         if self.detection_enabled:
             self.update_detection()
@@ -784,11 +784,11 @@ class MainWindow(QMainWindow):
             btn.setStyleSheet("background-color: #87CEFA;" if mode == active_mode else "")
 
     def lama_inpaint_action(self):
-        if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
+        if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             QMessageBox.warning(self, "Lama Inpaint", "No image loaded for inpainting.")
             return
         try:
-            cv_img = self.view.cv_image
+            cv_img = self.view.current_cv_image
             if len(cv_img.shape) == 3:
                 if cv_img.shape[2] == 3:
                     rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
@@ -815,12 +815,12 @@ class MainWindow(QMainWindow):
 
             qimage = ImageQt(result)
             pixmap = QPixmap.fromImage(qimage)
-            self.view.main_pixmap_item.setPixmap(pixmap)
-            self.view.scene_pixmap = pixmap
+            self.view.background_pixmap_item.setPixmap(pixmap)
+            self.view.current_background_pixmap = pixmap
 
             result_np = cv2.cvtColor(np.array(result), cv2.COLOR_RGB2BGR)
-            self.view.cv_image = result_np
-            self.view.base_cv_image = self.view.cv_image.copy()
+            self.view.current_cv_image = result_np
+            self.view.detection_cv_image = self.view.current_cv_image.copy()
 
             self.view._update_cv_image_conversions()
 
@@ -830,11 +830,11 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Lama Inpaint Error", f"An error occurred during inpainting:\n{str(e)}")
 
     def control_net_action(self):
-        if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
+        if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             QMessageBox.warning(self, "Control Net", "No image loaded for processing.")
             return
 
-        cv_img = self.view.cv_image
+        cv_img = self.view.current_cv_image
         if len(cv_img.shape) == 3:
             if cv_img.shape[2] == 3:
                 rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
@@ -883,12 +883,12 @@ class MainWindow(QMainWindow):
             result = result.resize(original_size, Image.Resampling.LANCZOS)
             qimage = ImageQt(result)
             pixmap = QPixmap.fromImage(qimage)
-            self.view.main_pixmap_item.setPixmap(pixmap)
-            self.view.scene_pixmap = pixmap
+            self.view.background_pixmap_item.setPixmap(pixmap)
+            self.view.current_background_pixmap = pixmap
 
             result_np = cv2.cvtColor(np.array(result), cv2.COLOR_RGB2BGR)
-            self.view.cv_image = result_np
-            self.view.base_cv_image = self.view.cv_image.copy()
+            self.view.current_cv_image = result_np
+            self.view.detection_cv_image = self.view.current_cv_image.copy()
 
             QMessageBox.information(self, "Control Net", "Control Net processing completed.")
             del pipe

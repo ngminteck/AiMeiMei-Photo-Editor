@@ -120,12 +120,12 @@ class FilterPanelWidget(QWidget):
             if child.widget():
                 child.widget().deleteLater()
 
-        if self.view.main_pixmap_item is None:
+        if self.view.background_pixmap_item is None:
             self.original_image = self.create_checkerboard(
                 (self.buttonIconSize.width(), self.buttonIconSize.height())
             )
         else:
-            qpixmap = self.view.main_pixmap_item.pixmap()
+            qpixmap = self.view.background_pixmap_item.pixmap()
             pil_image = Image.fromqimage(qpixmap.toImage())
             self.original_image = pil_image
 
@@ -154,11 +154,11 @@ class FilterPanelWidget(QWidget):
             return
 
         # Instead of using self.original_image, use the current base image from the view.
-        if not hasattr(self.view, 'base_cv_image') or self.view.base_cv_image is None:
+        if not hasattr(self.view, 'detection_cv_image') or self.view.detection_cv_image is None:
             return
 
-        # Convert the current base_cv_image (assumed to be in BGR or BGRA) to a PIL image.
-        cv_img = self.view.base_cv_image
+        # Convert the current detection_cv_image (assumed to be in BGR or BGRA) to a PIL image.
+        cv_img = self.view.detection_cv_image
         if cv_img.ndim < 3:
             # If image is grayscale, convert to RGB.
             pil_img = Image.fromarray(cv_img).convert("RGB")
@@ -182,18 +182,18 @@ class FilterPanelWidget(QWidget):
 
         # Convert the filtered PIL image back to QPixmap for preview
         qpixmap_filtered = self.PILImageToQPixmap(filtered)
-        if self.view.main_pixmap_item is not None:
-            self.view.main_pixmap_item.setPixmap(qpixmap_filtered)
+        if self.view.background_pixmap_item is not None:
+            self.view.background_pixmap_item.setPixmap(qpixmap_filtered)
         else:
             from PyQt6.QtWidgets import QGraphicsPixmapItem
-            self.view.main_pixmap_item = QGraphicsPixmapItem(qpixmap_filtered)
-            self.view.scene.addItem(self.view.main_pixmap_item)
+            self.view.background_pixmap_item = QGraphicsPixmapItem(qpixmap_filtered)
+            self.view.scene.addItem(self.view.background_pixmap_item)
 
         # Optionally, update the view's working image (preview) as well:
-        # Convert the filtered image back to cv2 format and update self.view.cv_image.
+        # Convert the filtered image back to cv2 format and update self.view.current_cv_image.
         filtered_np = np.array(filtered.convert("RGB"))
         # If the original had an alpha channel, you can handle it accordingly.
         # Here we assume RGB output.
         filtered_cv = cv2.cvtColor(filtered_np, cv2.COLOR_RGB2BGR)
-        self.view.cv_image = filtered_cv
+        self.view.current_cv_image = filtered_cv
 
