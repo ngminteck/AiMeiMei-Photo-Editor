@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QFileDialog, QMessageBox, QLabel, QTextEdit,
     QScrollArea, QListWidget, QListWidgetItem, QGraphicsPixmapItem,
-    QGroupBox, QDoubleSpinBox, QSpinBox
+    QGroupBox, QDoubleSpinBox, QSpinBox, QSlider
 )
 from PyQt6.QtGui import QScreen, QPixmap, QAction, QImage, QIcon
 from PyQt6.QtCore import Qt, QRect, QSize
@@ -172,46 +172,82 @@ class MainWindow(QMainWindow):
         config_group = QGroupBox("Configuration Settings")
         config_layout = QVBoxLayout(config_group)
 
-        # --- Enhancement Settings ---
-        enhancement_group = QGroupBox("Lightning Enhancement")
-        enhancement_layout = QVBoxLayout(enhancement_group)
+        # --- Lighting Adjustments Group ---
+        lighting_group = QGroupBox("Lighting Adjustments")
+        lighting_layout = QVBoxLayout(lighting_group)
 
-        lighting_brightness_label = QLabel("Brightness Factor:")
-        self.lighting_brightness_spin = QDoubleSpinBox()
-        self.lighting_brightness_spin.setRange(0.5, 2.0)
-        self.lighting_brightness_spin.setSingleStep(0.1)
-        self.lighting_brightness_spin.setValue(1.0)
-        enhancement_layout.addWidget(lighting_brightness_label)
-        enhancement_layout.addWidget(self.lighting_brightness_spin)
+        # Brightness control: slider and spin box
+        brightness_layout = QHBoxLayout()
+        brightness_label = QLabel("Brightness Factor:")
+        self.lighting_brightness_slider = QSlider(Qt.Orientation.Horizontal)
+        self.lighting_brightness_slider.setRange(50, 200)
+        self.lighting_brightness_slider.setValue(100)
+        self.lighting_brightness_spin = QSpinBox()
+        self.lighting_brightness_spin.setRange(50, 200)
+        self.lighting_brightness_spin.setValue(100)
+        self.lighting_brightness_slider.valueChanged.connect(self.lighting_brightness_spin.setValue)
+        self.lighting_brightness_spin.valueChanged.connect(self.lighting_brightness_slider.setValue)
+        self.lighting_brightness_slider.valueChanged.connect(self.updateLightingPreview)
+        brightness_layout.addWidget(brightness_label)
+        brightness_layout.addWidget(self.lighting_brightness_slider)
+        brightness_layout.addWidget(self.lighting_brightness_spin)
+        lighting_layout.addLayout(brightness_layout)
 
-        lighting_contrast_label = QLabel("Contrast Factor:")
-        self.lighting_contrast_spin = QDoubleSpinBox()
-        self.lighting_contrast_spin.setRange(0.5, 2.0)
-        self.lighting_contrast_spin.setSingleStep(0.1)
-        self.lighting_contrast_spin.setValue(1.0)
-        enhancement_layout.addWidget(lighting_contrast_label)
-        enhancement_layout.addWidget(self.lighting_contrast_spin)
+        # Contrast control: slider and spin box
+        contrast_layout = QHBoxLayout()
+        contrast_label = QLabel("Contrast Factor:")
+        self.lighting_contrast_slider = QSlider(Qt.Orientation.Horizontal)
+        self.lighting_contrast_slider.setRange(50, 200)
+        self.lighting_contrast_slider.setValue(100)
+        self.lighting_contrast_spin = QSpinBox()
+        self.lighting_contrast_spin.setRange(50, 200)
+        self.lighting_contrast_spin.setValue(100)
+        self.lighting_contrast_slider.valueChanged.connect(self.lighting_contrast_spin.setValue)
+        self.lighting_contrast_spin.valueChanged.connect(self.lighting_contrast_slider.setValue)
+        self.lighting_contrast_slider.valueChanged.connect(self.updateLightingPreview)
+        contrast_layout.addWidget(contrast_label)
+        contrast_layout.addWidget(self.lighting_contrast_slider)
+        contrast_layout.addWidget(self.lighting_contrast_spin)
+        lighting_layout.addLayout(contrast_layout)
 
-        lighting_gamma_label = QLabel("Gamma Correction:")
-        self.lighting_gamma_spin = QDoubleSpinBox()
-        self.lighting_gamma_spin.setRange(0.5, 2.5)
-        self.lighting_gamma_spin.setSingleStep(0.1)
-        self.lighting_gamma_spin.setValue(1.0)
-        enhancement_layout.addWidget(lighting_gamma_label)
-        enhancement_layout.addWidget(self.lighting_gamma_spin)
+        # Gamma control: slider and spin box
+        gamma_layout = QHBoxLayout()
+        gamma_label = QLabel("Gamma Correction:")
+        self.lighting_gamma_slider = QSlider(Qt.Orientation.Horizontal)
+        self.lighting_gamma_slider.setRange(50, 250)
+        self.lighting_gamma_slider.setValue(100)
+        self.lighting_gamma_spin = QSpinBox()
+        self.lighting_gamma_spin.setRange(50, 250)
+        self.lighting_gamma_spin.setValue(100)
+        self.lighting_gamma_slider.valueChanged.connect(self.lighting_gamma_spin.setValue)
+        self.lighting_gamma_spin.valueChanged.connect(self.lighting_gamma_slider.setValue)
+        self.lighting_gamma_slider.valueChanged.connect(self.updateLightingPreview)
+        gamma_layout.addWidget(gamma_label)
+        gamma_layout.addWidget(self.lighting_gamma_slider)
+        gamma_layout.addWidget(self.lighting_gamma_spin)
+        lighting_layout.addLayout(gamma_layout)
 
-        config_layout.addWidget(enhancement_group)
+        config_layout.addWidget(lighting_group)
 
-        sharpen_group = QGroupBox("Sharpen Enhancement")
+        # --- Sharpening Adjustments Group ---
+        sharpen_group = QGroupBox("Sharpening Adjustments")
         sharpen_layout = QVBoxLayout(sharpen_group)
 
+        sharpen_control_layout = QHBoxLayout()
         sharpen_label = QLabel("Sharpening Amount:")
-        self.sharpen_amount_spin = QDoubleSpinBox()
-        self.sharpen_amount_spin.setRange(0, 5.0)
-        self.sharpen_amount_spin.setSingleStep(0.1)
-        self.sharpen_amount_spin.setValue(1.0)
-        sharpen_layout.addWidget(sharpen_label)
-        sharpen_layout.addWidget(self.sharpen_amount_spin)
+        self.sharpen_slider = QSlider(Qt.Orientation.Horizontal)
+        self.sharpen_slider.setRange(0, 50)
+        self.sharpen_slider.setValue(10)
+        self.sharpen_spin = QSpinBox()
+        self.sharpen_spin.setRange(0, 50)
+        self.sharpen_spin.setValue(10)
+        self.sharpen_slider.valueChanged.connect(self.sharpen_spin.setValue)
+        self.sharpen_spin.valueChanged.connect(self.sharpen_slider.setValue)
+        self.sharpen_slider.valueChanged.connect(self.updateSharpenPreview)
+        sharpen_control_layout.addWidget(sharpen_label)
+        sharpen_control_layout.addWidget(self.sharpen_slider)
+        sharpen_control_layout.addWidget(self.sharpen_spin)
+        sharpen_layout.addLayout(sharpen_control_layout)
 
         config_layout.addWidget(sharpen_group)
 
@@ -599,65 +635,67 @@ class MainWindow(QMainWindow):
         )
         self.score_label.setText(new_text)
 
+    def updateLightingPreview(self):
+        # Ensure a base image exists
+        if not hasattr(self.view, 'base_cv_image') or self.view.base_cv_image is None:
+            return
+
+        brightness = self.lighting_brightness_slider.value() / 100.0
+        contrast = self.lighting_contrast_slider.value() / 100.0
+        gamma = self.lighting_gamma_slider.value() / 100.0
+
+        # Start with the unmodified base image and compute the preview
+        image = self.view.base_cv_image.astype(np.float32) / 255.0
+        # Apply gamma correction
+        image = np.power(image, 1.0 / gamma)
+        # Scale brightness and contrast
+        image = np.clip(image * contrast * brightness, 0, 1)
+        preview = (image * 255).astype(np.uint8)
+
+        # Update the current working image (preview only)
+        self.view.cv_image = preview
+        self.view._update_cv_image_conversions()
+
+        # Update the QPixmap to show preview
+        h, w, ch = self.view.cv_image_rgba.shape
+        bytes_per_line = ch * w
+        qimage = QImage(self.view.cv_image_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
+        pixmap = QPixmap.fromImage(qimage)
+        self.view.main_pixmap_item.setPixmap(pixmap)
+
+    def updateSharpenPreview(self):
+        if not hasattr(self.view, 'base_cv_image') or self.view.base_cv_image is None:
+            return
+
+        sharpen_amount = self.sharpen_slider.value() / 10.0
+        image = self.view.base_cv_image.astype(np.float32)
+        blurred = cv2.GaussianBlur(image, (0, 0), sigmaX=3)
+        sharpened = cv2.addWeighted(image, 1 + sharpen_amount, blurred, -sharpen_amount, 0)
+        sharpened = np.clip(sharpened, 0, 255).astype(np.uint8)
+
+        self.view.cv_image = sharpened
+        self.view._update_cv_image_conversions()
+
+        h, w, ch = self.view.cv_image_rgba.shape
+        bytes_per_line = ch * w
+        qimage = QImage(self.view.cv_image_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
+        pixmap = QPixmap.fromImage(qimage)
+        self.view.main_pixmap_item.setPixmap(pixmap)
+
     def enhance_lighting_action(self):
         if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
             QMessageBox.warning(self, "Enhance Lighting", "No image loaded for enhancement.")
             return
-        try:
-            brightness = self.lighting_brightness_spin.value()
-            contrast = self.lighting_contrast_spin.value()
-            gamma = self.lighting_gamma_spin.value()
-
-            # Convert the image to float in the [0,1] range
-            image = self.view.cv_image.astype(np.float32) / 255.0
-            # Apply gamma correction
-            image = np.power(image, 1.0 / gamma)
-            # Adjust brightness and contrast by scaling
-            image = np.clip(image * contrast * brightness, 0, 1)
-            new_image = (image * 255).astype(np.uint8)
-
-            self.view.cv_image = new_image
-            self.view.base_cv_image = new_image.copy()
-            self.view._update_cv_image_conversions()
-
-            h, w, ch = self.view.cv_image_rgba.shape
-            bytes_per_line = ch * w
-            qimage = QImage(self.view.cv_image_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
-            pixmap = QPixmap.fromImage(qimage)
-            self.view.main_pixmap_item.setPixmap(pixmap)
-            self.view.scene_pixmap = pixmap
-
-            QMessageBox.information(self, "Enhance Lighting", "Lighting enhancement applied successfully.")
-        except Exception as e:
-            QMessageBox.critical(self, "Enhance Lighting Error",
-                                 f"An error occurred during lighting enhancement:\n{str(e)}")
+        # Commit the preview effect by updating the base image.
+        self.view.base_cv_image = self.view.cv_image.copy()
+        QMessageBox.information(self, "Enhance Lighting", "Lighting enhancement applied.")
 
     def sharpen_image_action(self):
         if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
             QMessageBox.warning(self, "Sharpen Image", "No image loaded for sharpening.")
             return
-        try:
-            sharpening_amount = self.sharpen_amount_spin.value()
-            image = self.view.cv_image.astype(np.float32)
-            blurred = cv2.GaussianBlur(image, (0, 0), sigmaX=3)
-            sharpened = cv2.addWeighted(image, 1 + sharpening_amount, blurred, -sharpening_amount, 0)
-            sharpened = np.clip(sharpened, 0, 255).astype(np.uint8)
-
-            self.view.cv_image = sharpened
-            self.view.base_cv_image = sharpened.copy()
-            self.view._update_cv_image_conversions()
-
-            h, w, ch = self.view.cv_image_rgba.shape
-            bytes_per_line = ch * w
-            qimage = QImage(self.view.cv_image_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
-            pixmap = QPixmap.fromImage(qimage)
-            self.view.main_pixmap_item.setPixmap(pixmap)
-            self.view.scene_pixmap = pixmap
-
-            QMessageBox.information(self, "Sharpen Image", "Image sharpening applied successfully.")
-        except Exception as e:
-            QMessageBox.critical(self, "Sharpen Image Error",
-                                 f"An error occurred during image sharpening:\n{str(e)}")
+        self.view.base_cv_image = self.view.cv_image.copy()
+        QMessageBox.information(self, "Sharpen Image", "Image sharpening applied.")
 
     def upscale_image_action(self):
         if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:

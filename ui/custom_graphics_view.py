@@ -279,10 +279,10 @@ class CustomGraphicsView(QGraphicsView):
 
         self.selection_feedback_items = []
         outline_path = self._get_outline_path(self.u2net_selection_mask)
-        white_pen = QPen(QColor("white"), 2)
+        white_pen = QPen(QColor("white"), 4)
         item_white = QGraphicsPathItem(outline_path, self.selected_pixmap_item)
         item_white.setPen(white_pen)
-        black_pen = QPen(QColor("black"), 1)
+        black_pen = QPen(QColor("black"), 2)
         item_black = QGraphicsPathItem(outline_path, self.selected_pixmap_item)
         item_black.setPen(black_pen)
         self.selection_feedback_items = [item_white, item_black]
