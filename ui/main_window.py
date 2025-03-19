@@ -30,6 +30,7 @@ from providers.yolo_detection_provider import detect_objects, group_objects, sel
 from providers.realesrgan_provider import RealESRGANProvider
 from providers.sam_model_provider import SAMModelProvider
 from providers.u2net_provider import U2NetProvider
+from providers.score_provider import calculate_photo_score
 
 
 class MainWindow(QMainWindow):
@@ -63,9 +64,10 @@ class MainWindow(QMainWindow):
     def init_top_section(self, parent_layout):
         top_widget = QWidget()
         top_layout = QHBoxLayout(top_widget)
-        score_label = QLabel("Aesthetic Score: 85 | Position: Good | Angle: Optimal | Brightness: Balanced | Focus: Sharp")
-        score_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        top_layout.addWidget(score_label)
+        # Store the score label as an instance variable:
+        self.score_label = QLabel("Aesthetic Score: N/A | Position: N/A | Angle: N/A | Lighting: N/A | Focus: N/A")
+        self.score_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        top_layout.addWidget(self.score_label)
         parent_layout.addWidget(top_widget, 5)
 
     def init_center_section(self, parent_layout):
@@ -80,6 +82,7 @@ class MainWindow(QMainWindow):
 
         # Center: Image View
         self.view = CustomGraphicsView()
+        self.view.score_update_callback = self.update_score
 
         # Right: Filter Panel Widget
         self.filter_panel = FilterPanelWidget(self.view)
@@ -87,28 +90,43 @@ class MainWindow(QMainWindow):
         center_layout.addWidget(left_panel, 15)
         center_layout.addWidget(self.view, 70)
         center_layout.addWidget(self.filter_panel, 15)
-        parent_layout.addWidget(center_widget, 70)
+        parent_layout.addWidget(center_widget, 80)
 
     def init_bottom_section(self, parent_layout):
         bottom_widget = QWidget()
         bottom_layout = QHBoxLayout(bottom_widget)
         self.init_prompt_area(bottom_layout)
         self.init_reference_panel(bottom_layout)
-        parent_layout.addWidget(bottom_widget, 25)
+        parent_layout.addWidget(bottom_widget, 15)
 
     def init_left_buttons(self, layout):
+        # --- Create a container for the buttons ---
+        button_container = QWidget()
+        button_layout = QVBoxLayout(button_container)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+
         self.detection_toggle_button = QPushButton("Detection: OFF")
         self.detection_toggle_button.setCheckable(True)
         self.detection_toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.detection_toggle_button.clicked.connect(self.toggle_detection_action)
-        layout.addWidget(self.detection_toggle_button)
+        button_layout.addWidget(self.detection_toggle_button)
+
+        enhance_lighting_button = QPushButton("Enhance Lighting")
+        enhance_lighting_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        enhance_lighting_button.clicked.connect(self.enhance_lighting_action)
+        button_layout.addWidget(enhance_lighting_button)
+
+        sharpen_image_button = QPushButton("Sharpen Image")
+        sharpen_image_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        sharpen_image_button.clicked.connect(self.sharpen_image_action)
+        button_layout.addWidget(sharpen_image_button)
 
         upscale_button = QPushButton("4k Resolution")
         upscale_button.setCursor(Qt.CursorShape.PointingHandCursor)
         upscale_button.clicked.connect(self.upscale_image_action)
-        layout.addWidget(upscale_button)
+        button_layout.addWidget(upscale_button)
 
-        # Updated mode map including Clone Stamp mode.
+        # --- Mode Buttons ---
         mode_map = {
             "Transform": "transform",
             "Clone Stamp": "clone stamp",
@@ -119,35 +137,113 @@ class MainWindow(QMainWindow):
             btn = QPushButton(text)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(lambda checked, m=mode: self.set_mode_action(m))
-            layout.addWidget(btn)
+            button_layout.addWidget(btn)
             self.mode_buttons[mode] = btn
 
         auto_select_button = QPushButton("Salient Object Selection")
         auto_select_button.setCursor(Qt.CursorShape.PointingHandCursor)
         auto_select_button.clicked.connect(self.u2net_auto_action)
-        layout.addWidget(auto_select_button)
+        button_layout.addWidget(auto_select_button)
 
         lama_inpaint_button = QPushButton("Lama Inpaint")
         lama_inpaint_button.setCursor(Qt.CursorShape.PointingHandCursor)
         lama_inpaint_button.clicked.connect(self.lama_inpaint_action)
-        layout.addWidget(lama_inpaint_button)
+        button_layout.addWidget(lama_inpaint_button)
 
         controlnet_generate_button = QPushButton("Control Net Generate")
         controlnet_generate_button.setCursor(Qt.CursorShape.PointingHandCursor)
         controlnet_generate_button.clicked.connect(self.control_net_action)
-        layout.addWidget(controlnet_generate_button)
+        button_layout.addWidget(controlnet_generate_button)
 
         deselect_button = QPushButton("Deselect Selection")
         deselect_button.setCursor(Qt.CursorShape.PointingHandCursor)
         deselect_button.clicked.connect(self.apply_action)
-        layout.addWidget(deselect_button)
+        button_layout.addWidget(deselect_button)
 
-        self.init_config_settings(layout)
-        layout.addStretch(1)
+        # --- Build the configuration widget (scrollable) ---
+        config_widget = self.build_config_settings_widget()
 
-    def init_config_settings(self, layout):
+        # --- Add both containers to the left panel layout with stretch factors ---
+        layout.addWidget(button_container, 5)
+        layout.addWidget(config_widget, 5)
+
+    def build_config_settings_widget(self):
+        # Create the configuration group with all the settings
         config_group = QGroupBox("Configuration Settings")
         config_layout = QVBoxLayout(config_group)
+
+        # --- Enhancement Settings ---
+        enhancement_group = QGroupBox("Enhancement Settings")
+        enhancement_layout = QVBoxLayout(enhancement_group)
+
+        lighting_brightness_label = QLabel("Brightness Factor:")
+        self.lighting_brightness_spin = QDoubleSpinBox()
+        self.lighting_brightness_spin.setRange(0.5, 2.0)
+        self.lighting_brightness_spin.setSingleStep(0.1)
+        self.lighting_brightness_spin.setValue(1.0)
+        enhancement_layout.addWidget(lighting_brightness_label)
+        enhancement_layout.addWidget(self.lighting_brightness_spin)
+
+        lighting_contrast_label = QLabel("Contrast Factor:")
+        self.lighting_contrast_spin = QDoubleSpinBox()
+        self.lighting_contrast_spin.setRange(0.5, 2.0)
+        self.lighting_contrast_spin.setSingleStep(0.1)
+        self.lighting_contrast_spin.setValue(1.0)
+        enhancement_layout.addWidget(lighting_contrast_label)
+        enhancement_layout.addWidget(self.lighting_contrast_spin)
+
+        lighting_gamma_label = QLabel("Gamma Correction:")
+        self.lighting_gamma_spin = QDoubleSpinBox()
+        self.lighting_gamma_spin.setRange(0.5, 2.5)
+        self.lighting_gamma_spin.setSingleStep(0.1)
+        self.lighting_gamma_spin.setValue(1.0)
+        enhancement_layout.addWidget(lighting_gamma_label)
+        enhancement_layout.addWidget(self.lighting_gamma_spin)
+
+        sharpen_label = QLabel("Sharpening Amount:")
+        self.sharpen_amount_spin = QDoubleSpinBox()
+        self.sharpen_amount_spin.setRange(0, 5.0)
+        self.sharpen_amount_spin.setSingleStep(0.1)
+        self.sharpen_amount_spin.setValue(1.0)
+        enhancement_layout.addWidget(sharpen_label)
+        enhancement_layout.addWidget(self.sharpen_amount_spin)
+
+        config_layout.addWidget(enhancement_group)
+
+        # --- Quick Selection Configuration ---
+        quick_selection_group = QGroupBox("Quick Selection Configuration")
+        quick_selection_layout = QVBoxLayout(quick_selection_group)
+        brush_size_label = QLabel("Brush Size:")
+        self.quick_select_brush_spin = QSpinBox()
+        self.quick_select_brush_spin.setRange(1, 100)
+        self.quick_select_brush_spin.setValue(5)
+        self.quick_select_brush_spin.setSingleStep(1)
+        self.quick_select_brush_spin.valueChanged.connect(self.on_quick_select_brush_size_changed)
+        quick_selection_layout.addWidget(brush_size_label)
+        quick_selection_layout.addWidget(self.quick_select_brush_spin)
+        config_layout.addWidget(quick_selection_group)
+
+        # --- SAM Configuration ---
+        sam_config_group = QGroupBox("Object Selection (SAM) Configuration")
+        sam_layout = QVBoxLayout(sam_config_group)
+        sam_points_label = QLabel("SAM Points Per Side:")
+        self.sam_points_spin = QSpinBox()
+        self.sam_points_spin.setRange(16, 128)
+        self.sam_points_spin.setSingleStep(1)
+        self.sam_points_spin.setValue(64)
+        self.sam_points_spin.valueChanged.connect(self.on_sam_config_changed)
+        sam_layout.addWidget(sam_points_label)
+        sam_layout.addWidget(self.sam_points_spin)
+        sam_iou_label = QLabel("SAM IoU Threshold:")
+        self.sam_iou_spin = QDoubleSpinBox()
+        self.sam_iou_spin.setRange(0.0, 1.0)
+        self.sam_iou_spin.setSingleStep(0.05)
+        self.sam_iou_spin.setValue(0.75)
+        self.sam_iou_spin.valueChanged.connect(self.on_sam_config_changed)
+        sam_layout.addWidget(sam_iou_label)
+        sam_layout.addWidget(self.sam_iou_spin)
+        config_layout.addWidget(sam_config_group)
+        sam_config_group.setLayout(sam_layout)
 
         # --- U2Net Configuration ---
         u2net_config_group = QGroupBox("Salient Object Selection (U2Net) Configuration")
@@ -214,41 +310,6 @@ class MainWindow(QMainWindow):
         config_layout.addWidget(u2net_config_group)
         u2net_config_group.setLayout(u2net_layout)
 
-        # --- SAM Configuration ---
-        sam_config_group = QGroupBox("Object Selection (SAM) Configuration")
-        sam_layout = QVBoxLayout(sam_config_group)
-        sam_points_label = QLabel("SAM Points Per Side:")
-        self.sam_points_spin = QSpinBox()
-        self.sam_points_spin.setRange(16, 128)
-        self.sam_points_spin.setSingleStep(1)
-        self.sam_points_spin.setValue(64)
-        self.sam_points_spin.valueChanged.connect(self.on_sam_config_changed)
-        sam_layout.addWidget(sam_points_label)
-        sam_layout.addWidget(self.sam_points_spin)
-        sam_iou_label = QLabel("SAM IoU Threshold:")
-        self.sam_iou_spin = QDoubleSpinBox()
-        self.sam_iou_spin.setRange(0.0, 1.0)
-        self.sam_iou_spin.setSingleStep(0.05)
-        self.sam_iou_spin.setValue(0.75)
-        self.sam_iou_spin.valueChanged.connect(self.on_sam_config_changed)
-        sam_layout.addWidget(sam_iou_label)
-        sam_layout.addWidget(self.sam_iou_spin)
-        config_layout.addWidget(sam_config_group)
-        sam_config_group.setLayout(sam_layout)
-
-        # --- Quick Selection Configuration ---
-        quick_selection_group = QGroupBox("Quick Selection Configuration")
-        quick_selection_layout = QVBoxLayout(quick_selection_group)
-        brush_size_label = QLabel("Brush Size:")
-        self.quick_select_brush_spin = QSpinBox()
-        self.quick_select_brush_spin.setRange(1, 100)
-        self.quick_select_brush_spin.setValue(5)
-        self.quick_select_brush_spin.setSingleStep(1)
-        self.quick_select_brush_spin.valueChanged.connect(self.on_quick_select_brush_size_changed)
-        quick_selection_layout.addWidget(brush_size_label)
-        quick_selection_layout.addWidget(self.quick_select_brush_spin)
-        config_layout.addWidget(quick_selection_group)
-
         # --- Clone Stamp Configuration ---
         clone_stamp_group = QGroupBox("Clone Stamp Configuration")
         clone_stamp_layout = QVBoxLayout(clone_stamp_group)
@@ -262,7 +323,11 @@ class MainWindow(QMainWindow):
         clone_stamp_layout.addWidget(self.clone_stamp_brush_spin)
         config_layout.addWidget(clone_stamp_group)
 
-        layout.addWidget(config_group)
+        # --- Wrap the configuration group in a scroll area ---
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidget(config_group)
+        return scroll_area
 
     def on_u2net_threshold_changed(self, value):
         print(f"U2Net threshold updated to: {value:.2f}")
@@ -498,6 +563,96 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             QMessageBox.critical(self, "Detection Error", f"An error occurred during detection:\n{str(e)}")
+
+    def update_score(self):
+        """
+        Recalculate and update the aesthetic score for the current image scene.
+        This method uses self.view.cv_image and computes the focus object via YOLO.
+        """
+        if self.view.cv_image is None:
+            self.score_label.setText("Aesthetic Score: N/A | Position: N/A | Angle: N/A | Lighting: N/A | Focus: N/A")
+            return
+
+        frame = self.view.cv_image
+        # Run YOLO detection on the frame:
+        objects = detect_objects(frame)
+        if objects:
+            grouped_clusters = group_objects(objects)
+            focus_object = select_focus_object(grouped_clusters, frame.shape)
+        else:
+            focus_object = None
+
+        # Calculate the photo score using the current frame and the detected focus object.
+        score_data = calculate_photo_score(frame, [focus_object] if focus_object else [])
+        # Format the results for the top panel. Adjust the text as desired.
+        new_text = (
+            f"Aesthetic Score: {score_data['Final Score']} | "
+            f"Position: {score_data['Position']} | "
+            f"Angle: {score_data['Angle']} | "
+            f"Lighting: {score_data['Lighting']} | "
+            f"Focus: {score_data['Focus']}"
+        )
+        self.score_label.setText(new_text)
+
+    def enhance_lighting_action(self):
+        if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
+            QMessageBox.warning(self, "Enhance Lighting", "No image loaded for enhancement.")
+            return
+        try:
+            brightness = self.lighting_brightness_spin.value()
+            contrast = self.lighting_contrast_spin.value()
+            gamma = self.lighting_gamma_spin.value()
+
+            # Convert the image to float in the [0,1] range
+            image = self.view.cv_image.astype(np.float32) / 255.0
+            # Apply gamma correction
+            image = np.power(image, 1.0 / gamma)
+            # Adjust brightness and contrast by scaling
+            image = np.clip(image * contrast * brightness, 0, 1)
+            new_image = (image * 255).astype(np.uint8)
+
+            self.view.cv_image = new_image
+            self.view.base_cv_image = new_image.copy()
+            self.view._update_cv_image_conversions()
+
+            h, w, ch = self.view.cv_image_rgba.shape
+            bytes_per_line = ch * w
+            qimage = QImage(self.view.cv_image_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
+            pixmap = QPixmap.fromImage(qimage)
+            self.view.main_pixmap_item.setPixmap(pixmap)
+            self.view.scene_pixmap = pixmap
+
+            QMessageBox.information(self, "Enhance Lighting", "Lighting enhancement applied successfully.")
+        except Exception as e:
+            QMessageBox.critical(self, "Enhance Lighting Error",
+                                 f"An error occurred during lighting enhancement:\n{str(e)}")
+
+    def sharpen_image_action(self):
+        if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
+            QMessageBox.warning(self, "Sharpen Image", "No image loaded for sharpening.")
+            return
+        try:
+            sharpening_amount = self.sharpen_amount_spin.value()
+            image = self.view.cv_image.astype(np.float32)
+            blurred = cv2.GaussianBlur(image, (0, 0), sigmaX=3)
+            sharpened = cv2.addWeighted(image, 1 + sharpening_amount, blurred, -sharpening_amount, 0)
+            sharpened = np.clip(sharpened, 0, 255).astype(np.uint8)
+
+            self.view.cv_image = sharpened
+            self.view.base_cv_image = sharpened.copy()
+            self.view._update_cv_image_conversions()
+
+            h, w, ch = self.view.cv_image_rgba.shape
+            bytes_per_line = ch * w
+            qimage = QImage(self.view.cv_image_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
+            pixmap = QPixmap.fromImage(qimage)
+            self.view.main_pixmap_item.setPixmap(pixmap)
+            self.view.scene_pixmap = pixmap
+
+            QMessageBox.information(self, "Sharpen Image", "Image sharpening applied successfully.")
+        except Exception as e:
+            QMessageBox.critical(self, "Sharpen Image Error",
+                                 f"An error occurred during image sharpening:\n{str(e)}")
 
     def upscale_image_action(self):
         if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:

@@ -62,6 +62,8 @@ class CustomGraphicsView(QGraphicsView):
         self.clone_stamp_overlay = None  # Overlay to show current clone stamp brush area.
         self.clone_source_overlay = None  # Overlay to indicate the clone source.
 
+        self.score_update_callback = None
+
     def apply_contrast_and_sharpen(self, image):
         contrast_image = cv2.convertScaleAbs(image, alpha=1.3, beta=0)
         blurred = cv2.GaussianBlur(contrast_image, (0, 0), sigmaX=3)
@@ -84,6 +86,10 @@ class CustomGraphicsView(QGraphicsView):
         else:
             self.sam_cv_image_rgba = cv2.cvtColor(self.sam_cv_image, cv2.COLOR_BGR2RGBA)
             self.sam_cv_image_rgb = cv2.cvtColor(self.sam_cv_image, cv2.COLOR_BGR2RGB)
+
+        # Invoke the score update callback, if set:
+        if self.score_update_callback is not None:
+            self.score_update_callback()
 
     def drawBackground(self, painter, rect):
         if self.main_pixmap_item:
