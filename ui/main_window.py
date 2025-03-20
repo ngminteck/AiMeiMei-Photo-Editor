@@ -716,7 +716,25 @@ class MainWindow(QMainWindow):
             return
         try:
             current_image = self.view.current_cv_image.copy()
-            upscaled_image = RealESRGANProvider.upscale(current_image)
+
+            # Check if image has an alpha channel (transparency)
+            if current_image.shape[2] == 4:
+                # Separate RGB and alpha channels
+                rgb_image = current_image[:, :, :3]
+                alpha_channel = current_image[:, :, 3]
+
+                # Upscale RGB using RealESRGAN
+                upscaled_rgb = RealESRGANProvider.upscale(rgb_image)
+
+                # Upscale alpha channel using cv2.resize (or any interpolation you prefer)
+                new_size = (upscaled_rgb.shape[1], upscaled_rgb.shape[0])
+                upscaled_alpha = cv2.resize(alpha_channel, new_size, interpolation=cv2.INTER_LINEAR)
+
+                # Merge upscaled RGB and alpha channels
+                upscaled_image = np.dstack((upscaled_rgb, upscaled_alpha))
+            else:
+                upscaled_image = RealESRGANProvider.upscale(current_image)
+
             self.view.current_cv_image = upscaled_image
             self.view.detection_cv_image = upscaled_image.copy()
             self.view._update_cv_image_conversions()

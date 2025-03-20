@@ -31,7 +31,7 @@ class CustomGraphicsView(QGraphicsView):
         self.u2net_selection_mask = None  # Binary mask from U2Net auto selection
         self.image_shape = None  # (height, width) of current image
 
-        # OpenCV images (BGR)
+        # OpenCV images (BGRA)
         self.current_cv_image = None  # Current working image
         self.original_cv_image = None  # Copy of loaded image
         self.detection_cv_image = None  # For re-applying detection
