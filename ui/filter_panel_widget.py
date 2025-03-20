@@ -1,5 +1,5 @@
 import pilgram
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QScrollArea, QToolButton
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QScrollArea, QToolButton, QMessageBox
 from PyQt6.QtGui import QPixmap, QImage, QIcon
 from PyQt6.QtCore import Qt, QSize
 from PIL import Image, ImageDraw
@@ -156,6 +156,11 @@ class FilterPanelWidget(QWidget):
         if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             return
 
+        if self.view.selection_mask is not None and np.count_nonzero(self.view.selection_mask) > 0:
+            QMessageBox.warning(self, "Filtering",
+                                "Apply merge before applying filter.")
+            return
+
         # Convert the current detection_cv_image (assumed to be in BGR or BGRA) to a PIL image.
         cv_img = self.view.current_cv_image
         if cv_img.ndim < 3:
@@ -195,4 +200,8 @@ class FilterPanelWidget(QWidget):
         # Here we assume RGB output.
         filtered_cv = cv2.cvtColor(filtered_np, cv2.COLOR_RGB2BGR)
         self.view.current_cv_image = filtered_cv
+
+        self.view.update_all_cv_image_conversions()
+
+        QMessageBox.information(self, "Apply Filter", "Filter applied.")
 

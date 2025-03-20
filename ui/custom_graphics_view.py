@@ -26,7 +26,7 @@ class CustomGraphicsView(QGraphicsView):
         self.mode = "transform"
         self.positive_points = []  # For SAM prompt-based selection
         self.negative_points = []  # For SAM prompt-based selection
-        self.u2net_selection_mask = None  # Binary mask from U2Net auto selection
+        self.selection_mask = None  # Binary mask from U2Net auto selection
         self.image_shape = None  # (height, width) of current image
 
         # OpenCV images (BGRA)
@@ -68,7 +68,7 @@ class CustomGraphicsView(QGraphicsView):
         sharpened = cv2.addWeighted(contrast_image, 1.5, blurred, -0.5, 0)
         return sharpened
 
-    def _update_cv_image_conversions(self):
+    def update_all_cv_image_conversions(self):
         if self.current_cv_image is None or len(self.current_cv_image.shape) < 3:
             return
         self.image_shape = (self.current_cv_image.shape[0], self.current_cv_image.shape[1])
@@ -115,7 +115,7 @@ class CustomGraphicsView(QGraphicsView):
 
     def load_image(self, image_path):
         # Merge selection if exists.
-        if self.u2net_selection_mask is not None and np.count_nonzero(self.u2net_selection_mask) > 0:
+        if self.selection_mask is not None and np.count_nonzero(self.selection_mask) > 0:
             self.apply_merge()
 
         self.clear_detection()
@@ -127,7 +127,7 @@ class CustomGraphicsView(QGraphicsView):
         self.selection_feedback_items = []
         self.positive_points = []
         self.negative_points = []
-        self.u2net_selection_mask = None
+        self.selection_mask = None
 
         if self.clone_stamp_overlay:
             self.scene.removeItem(self.clone_stamp_overlay)
@@ -144,7 +144,7 @@ class CustomGraphicsView(QGraphicsView):
 
         # Initialize the selection mask to zeros (preserving any transparency already in the image)
         h, w = self.current_cv_image.shape[:2]
-        self.u2net_selection_mask = np.zeros((h, w), dtype=np.uint8)
+        self.selection_mask = np.zeros((h, w), dtype=np.uint8)
 
         self.detection_cv_image = self.current_cv_image.copy()
 
@@ -172,7 +172,7 @@ class CustomGraphicsView(QGraphicsView):
             self.positive_points = []
             self.negative_points = []
         if mode != "transform" and self.current_cv_image is not None:
-            self._update_cv_image_conversions()
+            self.update_all_cv_image_conversions()
 
         if mode != "quick selection" and self.quick_selection_overlay:
             self.scene.removeItem(self.quick_selection_overlay)
@@ -292,10 +292,10 @@ class CustomGraphicsView(QGraphicsView):
         mask_uint8 = (mask.astype(np.uint8)) * 255
         kernel = np.ones((5, 5), np.uint8)
         mask_uint8 = cv2.morphologyEx(mask_uint8, cv2.MORPH_CLOSE, kernel)
-        self.u2net_selection_mask = cv2.bitwise_or(self.u2net_selection_mask, mask_uint8)
+        self.selection_mask = cv2.bitwise_or(self.selection_mask, mask_uint8)
 
         bridge_kernel = np.ones((25, 25), np.uint8)
-        self.u2net_selection_mask = cv2.morphologyEx(self.u2net_selection_mask, cv2.MORPH_CLOSE, bridge_kernel)
+        self.selection_mask = cv2.morphologyEx(self.selection_mask, cv2.MORPH_CLOSE, bridge_kernel)
         print("Merged prompt-based selection into union mask with bridging.")
 
         self.positive_points = []
@@ -319,10 +319,10 @@ class CustomGraphicsView(QGraphicsView):
         return path
 
     def update_display(self):
-        if self.current_cv_image is None or self.u2net_selection_mask is None:
+        if self.current_cv_image is None or self.selection_mask is None:
             return
         if self.display_cv_image is None:
-            self._update_cv_image_conversions()
+            self.update_all_cv_image_conversions()
 
         if self.selected_pixmap_item:
             self.scene.removeItem(self.selected_pixmap_item)
@@ -334,7 +334,7 @@ class CustomGraphicsView(QGraphicsView):
         # Preserve the original alpha from display_cv_image
         bg_rgba = self.display_cv_image.copy()
         orig_alpha = self.display_cv_image[..., 3].copy() if self.display_cv_image.shape[2] == 4 else np.full((self.image_shape[0], self.image_shape[1]), 255, dtype=np.uint8)
-        bg_rgba[..., 3] = np.where(self.u2net_selection_mask == 255, 0, orig_alpha)
+        bg_rgba[..., 3] = np.where(self.selection_mask == 255, 0, orig_alpha)
 
         h, w, ch = bg_rgba.shape
         bytes_per_line = ch * w
@@ -344,7 +344,7 @@ class CustomGraphicsView(QGraphicsView):
 
         # Create foreground image showing only the selected region
         sel_rgba = self.display_cv_image.copy()
-        sel_rgba[self.u2net_selection_mask != 255] = [0, 0, 0, 0]
+        sel_rgba[self.selection_mask != 255] = [0, 0, 0, 0]
         sel_qimage = QImage(sel_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
         sel_pixmap = QPixmap.fromImage(sel_qimage)
         if self.selected_pixmap_item:
@@ -353,7 +353,7 @@ class CustomGraphicsView(QGraphicsView):
         self.selected_pixmap_item.setZValue(10)
         self.scene.addItem(self.selected_pixmap_item)
 
-        outline_path = self._get_outline_path(self.u2net_selection_mask)
+        outline_path = self._get_outline_path(self.selection_mask)
         white_pen = QPen(QColor("white"), 2)
         item_white = QGraphicsPathItem(outline_path, self.selected_pixmap_item)
         item_white.setPen(white_pen)
@@ -385,24 +385,24 @@ class CustomGraphicsView(QGraphicsView):
         Create a composite image that includes the current selection overlay.
         The result is stored in self.detection_cv_image.
         """
-        if self.display_cv_image is None or self.u2net_selection_mask is None:
+        if self.display_cv_image is None or self.selection_mask is None:
             return
 
         # Background: use original image but make selected areas transparent
         bg_rgba = self.display_cv_image.copy()
         orig_alpha = self.display_cv_image[..., 3].copy() if self.display_cv_image.shape[2] == 4 else np.full((self.image_shape[0], self.image_shape[1]), 255, dtype=np.uint8)
-        bg_rgba[..., 3] = np.where(self.u2net_selection_mask == 255, 0, orig_alpha)
+        bg_rgba[..., 3] = np.where(self.selection_mask == 255, 0, orig_alpha)
 
         # Foreground: only the selected region (rest transparent)
         sel_rgba = self.display_cv_image.copy()
-        sel_rgba[self.u2net_selection_mask != 255] = [0, 0, 0, 0]
+        sel_rgba[self.selection_mask != 255] = [0, 0, 0, 0]
 
         composite = self.alpha_composite(bg_rgba, sel_rgba)
         self.detection_cv_image = composite
 
     def apply_merge(self):
         if self.selected_pixmap_item is None and (
-                self.u2net_selection_mask is None or np.count_nonzero(self.u2net_selection_mask) == 0):
+                self.selection_mask is None or np.count_nonzero(self.selection_mask) == 0):
             print("No active selection mask to merge.")
             self.selection_feedback_items = []
             return
@@ -423,7 +423,7 @@ class CustomGraphicsView(QGraphicsView):
             self.selected_pixmap_item = None
 
         self.selection_feedback_items = []
-        self.u2net_selection_mask = np.zeros(self.image_shape, dtype=np.uint8)
+        self.selection_mask = np.zeros(self.image_shape, dtype=np.uint8)
         print("Merge applied: selection merged into current image.")
 
         buffer = QBuffer()
@@ -433,7 +433,7 @@ class CustomGraphicsView(QGraphicsView):
         self.current_cv_image = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
         buffer.close()
 
-        self._update_cv_image_conversions()
+        self.update_all_cv_image_conversions()
         self.detection_cv_image = self.current_cv_image.copy()
 
     def _quick_select_at_position(self, pos, button):
@@ -449,9 +449,9 @@ class CustomGraphicsView(QGraphicsView):
         dist = np.sqrt((X - x) ** 2 + (Y - y) ** 2)
         mask_area = dist <= brush_radius
         if button == Qt.MouseButton.LeftButton:
-            self.u2net_selection_mask[mask_area] = 255
+            self.selection_mask[mask_area] = 255
         elif button == Qt.MouseButton.RightButton:
-            self.u2net_selection_mask[mask_area] = 0
+            self.selection_mask[mask_area] = 0
         self.update_display()
 
     def _update_quick_selection_overlay(self, pos):
@@ -494,7 +494,7 @@ class CustomGraphicsView(QGraphicsView):
         w = min(patch_w, dest_w)
         if h > 0 and w > 0:
             self.current_cv_image[dest_y1:dest_y1 + h, dest_x1:dest_x1 + w] = patch[:h, :w]
-            self._update_cv_image_conversions()
+            self.update_all_cv_image_conversions()
             h_img, w_img, ch = self.display_cv_image.shape
             bytes_per_line = ch * w_img
             qimage = QImage(self.display_cv_image.data, w_img, h_img, bytes_per_line, QImage.Format.Format_RGBA8888)

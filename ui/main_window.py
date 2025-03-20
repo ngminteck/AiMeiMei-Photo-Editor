@@ -116,21 +116,6 @@ class MainWindow(QMainWindow):
         self.detection_toggle_button.clicked.connect(self.toggle_detection_action)
         button_layout.addWidget(self.detection_toggle_button)
 
-        enhance_lighting_button = QPushButton("Enhance Lighting")
-        enhance_lighting_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        enhance_lighting_button.clicked.connect(self.enhance_lighting_action)
-        button_layout.addWidget(enhance_lighting_button)
-
-        apply_filter_button = QPushButton("Apply Filter")
-        apply_filter_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        apply_filter_button.clicked.connect(self.apply_filter_action)
-        button_layout.addWidget(apply_filter_button, 1)
-
-        sharpen_image_button = QPushButton("Sharpen Image")
-        sharpen_image_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        sharpen_image_button.clicked.connect(self.sharpen_image_action)
-        button_layout.addWidget(sharpen_image_button)
-
         upscale_button = QPushButton("4k Resolution")
         upscale_button.setCursor(Qt.CursorShape.PointingHandCursor)
         upscale_button.clicked.connect(self.upscale_image_action)
@@ -154,6 +139,11 @@ class MainWindow(QMainWindow):
         auto_select_button.clicked.connect(self.u2net_auto_action)
         button_layout.addWidget(auto_select_button)
 
+        deselect_button = QPushButton("Merge Selection with Background")
+        deselect_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        deselect_button.clicked.connect(self.apply_action)
+        button_layout.addWidget(deselect_button)
+
         lama_inpaint_button = QPushButton("Lama Inpaint")
         lama_inpaint_button.setCursor(Qt.CursorShape.PointingHandCursor)
         lama_inpaint_button.clicked.connect(self.lama_inpaint_action)
@@ -164,10 +154,6 @@ class MainWindow(QMainWindow):
         controlnet_generate_button.clicked.connect(self.control_net_action)
         button_layout.addWidget(controlnet_generate_button)
 
-        deselect_button = QPushButton("Deselect Selection")
-        deselect_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        deselect_button.clicked.connect(self.apply_action)
-        button_layout.addWidget(deselect_button)
 
         layout.addWidget(button_container, 5)
         # Add configuration panel next to buttons
@@ -736,6 +722,11 @@ class MainWindow(QMainWindow):
     def updateLightingPreview(self):
         if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             return
+
+        if self.view.selection_mask is not None and np.count_nonzero(self.view.selection_mask) > 0:
+            QMessageBox.warning(self, "Lightning",
+                                "A selection exists. Apply merge before adjusting lighting..")
+            return
         brightness = self.lighting_brightness_slider.value() / 100.0
         contrast = self.lighting_contrast_slider.value() / 100.0
         gamma = self.lighting_gamma_slider.value() / 100.0
@@ -746,8 +737,7 @@ class MainWindow(QMainWindow):
         preview = (image * 255).astype(np.uint8)
         self.view.current_cv_image = preview
 
-
-        self.view._update_cv_image_conversions()
+        self.view.update_all_cv_image_conversions()
         h, w, ch = self.view.display_cv_image.shape
         bytes_per_line = ch * w
         qimage = QImage(self.view.display_cv_image.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
@@ -757,6 +747,11 @@ class MainWindow(QMainWindow):
     def updateSharpenPreview(self):
         if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             return
+
+        if self.view.selection_mask is not None and np.count_nonzero(self.view.selection_mask) > 0:
+            QMessageBox.warning(self, "Sharpening",
+                                "A selection exists. Apply merge before sharpening.")
+            return
         sharpen_amount = self.sharpen_slider.value() / 10.0
         image = self.view.current_cv_image.astype(np.float32)
         blurred = cv2.GaussianBlur(image, (0, 0), sigmaX=3)
@@ -764,36 +759,20 @@ class MainWindow(QMainWindow):
         sharpened = np.clip(sharpened, 0, 255).astype(np.uint8)
         self.view.current_cv_image = sharpened
 
-
-
-        self.view._update_cv_image_conversions()
+        self.view.update_all_cv_image_conversions()
         h, w, ch = self.view.display_cv_image.shape
         bytes_per_line = ch * w
         qimage = QImage(self.view.display_cv_image.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
         pixmap = QPixmap.fromImage(qimage)
         self.view.background_pixmap_item.setPixmap(pixmap)
 
-    def enhance_lighting_action(self):
-        if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
-            QMessageBox.warning(self, "Enhance Lighting", "No image loaded for enhancement.")
-            return
-        QMessageBox.information(self, "Enhance Lighting", "Lighting enhancement applied.")
-
-    def apply_filter_action(self):
-        if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
-            QMessageBox.warning(self, "Apply Filter", "No filter preview available.")
-            return
-        QMessageBox.information(self, "Apply Filter", "Filter applied.")
-
-    def sharpen_image_action(self):
-        if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
-            QMessageBox.warning(self, "Sharpen Image", "No image loaded for sharpening.")
-            return
-        QMessageBox.information(self, "Sharpen Image", "Image sharpening applied.")
-
     def upscale_image_action(self):
         if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             QMessageBox.warning(self, "4k Resolution", "No image loaded for upscaling.")
+            return
+
+        if self.view.selection_mask is not None and np.count_nonzero(self.view.selection_mask) > 0:
+            QMessageBox.warning(self, "4k Resolution", "A selection exists. Apply merge before upscaling.")
             return
         try:
             current_image = self.view.current_cv_image.copy()
@@ -807,7 +786,7 @@ class MainWindow(QMainWindow):
             else:
                 upscaled_image = RealESRGANProvider.upscale(current_image)
             self.view.current_cv_image = upscaled_image
-            self.view._update_cv_image_conversions()
+            self.view.update_all_cv_image_conversions()
             h, w, ch = self.view.display_cv_image.shape
             bytes_per_line = ch * w
             qimage = QImage(self.view.display_cv_image.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
@@ -827,6 +806,10 @@ class MainWindow(QMainWindow):
     def u2net_auto_action(self):
         if self.action_in_progress:
             return
+        if self.view.selection_mask is not None and np.count_nonzero(self.view.selection_mask) > 0:
+            QMessageBox.warning(self, "Auto Salient Object",
+                                "A selection already exists. Apply merge before selecting a new object.")
+            return
         self.action_in_progress = True
         try:
             if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
@@ -837,8 +820,8 @@ class MainWindow(QMainWindow):
             if img_for_u2net.shape[2] == 4:
                 img_for_u2net = cv2.cvtColor(img_for_u2net, cv2.COLOR_BGRA2BGR)
             mask = U2NetProvider.get_salient_mask(img_for_u2net, threshold=threshold_value)
-            self.view.u2net_selection_mask = mask
-            self.view._update_cv_image_conversions()
+            self.view.selection_mask = mask
+            self.view.update_all_cv_image_conversions()
             self.view.update_display()
             QMessageBox.information(self, "Auto Salient Object", "Salient object segmentation completed.")
             U2NetProvider._session = None
@@ -920,7 +903,7 @@ class MainWindow(QMainWindow):
             self.view.background_pixmap_item.setPixmap(pixmap)
             result_np = cv2.cvtColor(np.array(result), cv2.COLOR_RGB2BGR)
             self.view.current_cv_image = result_np
-            self.view._update_cv_image_conversions()
+            self.view.update_all_cv_image_conversions()
 
             QMessageBox.information(self, "Lama Inpaint", "Lama inpainting completed.")
 
