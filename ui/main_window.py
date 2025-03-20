@@ -13,15 +13,15 @@ from PyQt6.QtWidgets import (
     QScrollArea, QListWidget, QListWidgetItem, QGraphicsPixmapItem,
     QGroupBox, QDoubleSpinBox, QSpinBox, QSlider
 )
-from PyQt6.QtGui import QScreen, QPixmap, QAction, QImage, QIcon
-from PyQt6.QtCore import Qt, QRect, QSize
+from PyQt6.QtGui import QScreen, QPixmap, QAction, QImage, QIcon, QBrush, QPen, QPainter
+from PyQt6.QtCore import Qt, QRect, QSize, QTimer, QBuffer, QIODevice
 
 from PIL import Image, ImageOps
 from PIL.ImageQt import ImageQt
 
 # Custom modules
 from ui.custom_graphics_view import CustomGraphicsView
-from ui.filter_panel_widget import FilterPanelWidget  # Assumes you have this module
+from ui.filter_panel_widget import FilterPanelWidget
 
 # Providers
 from simple_lama_inpainting import SimpleLama
@@ -41,18 +41,25 @@ class MainWindow(QMainWindow):
         self.detection_enabled = False
         self.reference_dir = os.path.join("images", "reference_images")
         os.makedirs(self.reference_dir, exist_ok=True)
+        # Flag to block updates during heavy operations
+        self.action_in_progress = False
         self.initUI()
+
+        # Separate timers:
+        self.detection_timer = QTimer(self)
+        self.detection_timer.timeout.connect(self.safe_update_detection)
+        self.detection_timer.start(1000)  # every 1 second
+        self.score_timer = QTimer(self)
+        self.score_timer.timeout.connect(self.safe_update_score)
+        self.score_timer.start(100)  # every 100 ms
 
     def initUI(self):
         self.setWindowTitle("Image Editor")
         central_widget = QWidget()
         main_layout = QVBoxLayout(central_widget)
 
-        # --- Top Section ---
         self.init_top_section(main_layout)
-        # --- Center Section ---
         self.init_center_section(main_layout)
-        # --- Bottom Section ---
         self.init_bottom_section(main_layout)
 
         self.setCentralWidget(central_widget)
@@ -64,7 +71,6 @@ class MainWindow(QMainWindow):
     def init_top_section(self, parent_layout):
         top_widget = QWidget()
         top_layout = QHBoxLayout(top_widget)
-        # Store the score label as an instance variable:
         self.score_label = QLabel("Aesthetic Score: N/A | Position: N/A | Angle: N/A | Lighting: N/A | Focus: N/A")
         self.score_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         top_layout.addWidget(self.score_label)
@@ -74,17 +80,17 @@ class MainWindow(QMainWindow):
         center_widget = QWidget()
         center_layout = QHBoxLayout(center_widget)
 
-        # Left: Button Panel
+        # Left Button Panel
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
         self.init_left_buttons(left_layout)
 
-        # Center: Image View
+        # Center Image View
         self.view = CustomGraphicsView()
-        self.view.score_update_callback = self.update_score
+        self.view.score_update_callback = None
 
-        # Right: Filter Panel Widget
+        # Right Filter Panel
         self.filter_panel = FilterPanelWidget(self.view)
 
         center_layout.addWidget(left_panel, 15)
@@ -100,7 +106,6 @@ class MainWindow(QMainWindow):
         parent_layout.addWidget(bottom_widget, 15)
 
     def init_left_buttons(self, layout):
-        # --- Create a container for the buttons ---
         button_container = QWidget()
         button_layout = QVBoxLayout(button_container)
         button_layout.setContentsMargins(0, 0, 0, 0)
@@ -116,7 +121,6 @@ class MainWindow(QMainWindow):
         enhance_lighting_button.clicked.connect(self.enhance_lighting_action)
         button_layout.addWidget(enhance_lighting_button)
 
-        # In your init_left_buttons() method, after adding the configuration widget:
         apply_filter_button = QPushButton("Apply Filter")
         apply_filter_button.setCursor(Qt.CursorShape.PointingHandCursor)
         apply_filter_button.clicked.connect(self.apply_filter_action)
@@ -132,7 +136,6 @@ class MainWindow(QMainWindow):
         upscale_button.clicked.connect(self.upscale_image_action)
         button_layout.addWidget(upscale_button)
 
-        # --- Mode Buttons ---
         mode_map = {
             "Transform": "transform",
             "Clone Stamp": "clone stamp",
@@ -166,23 +169,18 @@ class MainWindow(QMainWindow):
         deselect_button.clicked.connect(self.apply_action)
         button_layout.addWidget(deselect_button)
 
-        # --- Build the configuration widget (scrollable) ---
-        config_widget = self.build_config_settings_widget()
-
-        # --- Add both containers to the left panel layout with stretch factors ---
         layout.addWidget(button_container, 5)
+        # Add configuration panel next to buttons
+        config_widget = self.build_config_settings_widget()
         layout.addWidget(config_widget, 5)
 
     def build_config_settings_widget(self):
-        # Create the configuration group with all the settings
         config_group = QGroupBox("Configuration Settings")
         config_layout = QVBoxLayout(config_group)
 
-        # --- Lighting Adjustments Group ---
+        # Lighting Adjustments Group
         lighting_group = QGroupBox("Lighting Adjustments")
         lighting_layout = QVBoxLayout(lighting_group)
-
-        # Brightness control: slider and spin box
         brightness_layout = QHBoxLayout()
         brightness_label = QLabel("Brightness Factor:")
         self.lighting_brightness_slider = QSlider(Qt.Orientation.Horizontal)
@@ -199,7 +197,6 @@ class MainWindow(QMainWindow):
         brightness_layout.addWidget(self.lighting_brightness_spin)
         lighting_layout.addLayout(brightness_layout)
 
-        # Contrast control: slider and spin box
         contrast_layout = QHBoxLayout()
         contrast_label = QLabel("Contrast Factor:")
         self.lighting_contrast_slider = QSlider(Qt.Orientation.Horizontal)
@@ -216,7 +213,6 @@ class MainWindow(QMainWindow):
         contrast_layout.addWidget(self.lighting_contrast_spin)
         lighting_layout.addLayout(contrast_layout)
 
-        # Gamma control: slider and spin box
         gamma_layout = QHBoxLayout()
         gamma_label = QLabel("Gamma Correction:")
         self.lighting_gamma_slider = QSlider(Qt.Orientation.Horizontal)
@@ -235,10 +231,9 @@ class MainWindow(QMainWindow):
 
         config_layout.addWidget(lighting_group)
 
-        # --- Sharpening Adjustments Group ---
+        # Sharpening Adjustments Group
         sharpen_group = QGroupBox("Sharpening Adjustments")
         sharpen_layout = QVBoxLayout(sharpen_group)
-
         sharpen_control_layout = QHBoxLayout()
         sharpen_label = QLabel("Sharpening Amount:")
         self.sharpen_slider = QSlider(Qt.Orientation.Horizontal)
@@ -254,10 +249,9 @@ class MainWindow(QMainWindow):
         sharpen_control_layout.addWidget(self.sharpen_slider)
         sharpen_control_layout.addWidget(self.sharpen_spin)
         sharpen_layout.addLayout(sharpen_control_layout)
-
         config_layout.addWidget(sharpen_group)
 
-        # --- Quick Selection Configuration ---
+        # Quick Selection Configuration
         quick_selection_group = QGroupBox("Quick Selection Configuration")
         quick_selection_layout = QVBoxLayout(quick_selection_group)
         brush_size_label = QLabel("Brush Size:")
@@ -270,7 +264,7 @@ class MainWindow(QMainWindow):
         quick_selection_layout.addWidget(self.quick_select_brush_spin)
         config_layout.addWidget(quick_selection_group)
 
-        # --- SAM Configuration ---
+        # SAM Configuration
         sam_config_group = QGroupBox("Object Selection (SAM) Configuration")
         sam_layout = QVBoxLayout(sam_config_group)
         sam_points_label = QLabel("SAM Points Per Side:")
@@ -290,16 +284,14 @@ class MainWindow(QMainWindow):
         sam_layout.addWidget(sam_iou_label)
         sam_layout.addWidget(self.sam_iou_spin)
         config_layout.addWidget(sam_config_group)
-        sam_config_group.setLayout(sam_layout)
 
-        # --- U2Net Configuration ---
+        # U2Net Configuration
         u2net_config_group = QGroupBox("Salient Object Selection (U2Net) Configuration")
         u2net_layout = QVBoxLayout(u2net_config_group)
         u2net_threshold_label = QLabel("U2Net Threshold:")
         self.u2net_threshold_spin = QDoubleSpinBox()
         self.u2net_threshold_spin.setRange(0.0, 1.0)
         self.u2net_threshold_spin.setSingleStep(0.01)
-        # Updated default value to 0.3 for improved segmentation quality.
         self.u2net_threshold_spin.setValue(0.3)
         self.u2net_threshold_spin.valueChanged.connect(self.on_u2net_threshold_changed)
         u2net_layout.addWidget(u2net_threshold_label)
@@ -358,7 +350,7 @@ class MainWindow(QMainWindow):
         config_layout.addWidget(u2net_config_group)
         u2net_config_group.setLayout(u2net_layout)
 
-        # --- Clone Stamp Configuration ---
+        # Clone Stamp Configuration
         clone_stamp_group = QGroupBox("Clone Stamp Configuration")
         clone_stamp_layout = QVBoxLayout(clone_stamp_group)
         clone_brush_label = QLabel("Clone Stamp Brush Size:")
@@ -371,7 +363,6 @@ class MainWindow(QMainWindow):
         clone_stamp_layout.addWidget(self.clone_stamp_brush_spin)
         config_layout.addWidget(clone_stamp_group)
 
-        # --- Wrap the configuration group in a scroll area ---
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setWidget(config_group)
@@ -449,6 +440,45 @@ class MainWindow(QMainWindow):
         reference_vlayout.addWidget(self.reference_list_widget)
         layout.addWidget(reference_container, 1)
 
+    def refresh_reference_list(self):
+        self.reference_list_widget.clear()
+        if os.path.exists(self.reference_dir):
+            for file in os.listdir(self.reference_dir):
+                file_path = os.path.join(self.reference_dir, file)
+                if os.path.isfile(file_path):
+                    icon = QIcon(QPixmap(file_path).scaled(50, 50, Qt.AspectRatioMode.KeepAspectRatio,
+                                                           Qt.TransformationMode.SmoothTransformation))
+                    item = QListWidgetItem(icon, file)
+                    item.setData(Qt.ItemDataRole.UserRole, file_path)
+                    self.reference_list_widget.addItem(item)
+
+    def add_reference_images(self):
+        file_dialog = QFileDialog(self)
+        file_dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
+        file_dialog.setNameFilter("Image Files (*.png *.jpg *.jpeg *.bmp *.gif)")
+        if file_dialog.exec():
+            files = file_dialog.selectedFiles()
+            for file in files:
+                basename = os.path.basename(file)
+                destination = os.path.join(self.reference_dir, basename)
+                if os.path.exists(destination):
+                    destination = os.path.join(self.reference_dir, f"{uuid.uuid4().hex}_{basename}")
+                try:
+                    shutil.copy(file, destination)
+                except Exception as e:
+                    print(f"Error copying file {file} to {destination}: {e}")
+            self.refresh_reference_list()
+
+    def delete_selected_reference_images(self):
+        selected_items = self.reference_list_widget.selectedItems()
+        for item in selected_items:
+            file_path = item.data(Qt.ItemDataRole.UserRole)
+            try:
+                os.remove(file_path)
+            except Exception as e:
+                print(f"Failed to delete {file_path}: {e}")
+        self.refresh_reference_list()
+
     def open_image(self):
         file_dialog = QFileDialog()
         image_file, _ = file_dialog.getOpenFileName(self, "Open Image", "", "Image Files (*.png *.jpg *.bmp)")
@@ -501,84 +531,114 @@ class MainWindow(QMainWindow):
     def restore_default_prompt(self):
         self.prompt_field.setPlainText(self.default_prompt)
 
-    def refresh_reference_list(self):
-        self.reference_list_widget.clear()
-        if os.path.exists(self.reference_dir):
-            for file in os.listdir(self.reference_dir):
-                file_path = os.path.join(self.reference_dir, file)
-                if os.path.isfile(file_path):
-                    icon = QIcon(QPixmap(file_path).scaled(50, 50, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-                    item = QListWidgetItem(icon, file)
-                    item.setData(Qt.ItemDataRole.UserRole, file_path)
-                    self.reference_list_widget.addItem(item)
-
-    def add_reference_images(self):
-        file_dialog = QFileDialog(self)
-        file_dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
-        file_dialog.setNameFilter("Image Files (*.png *.jpg *.jpeg *.bmp *.gif)")
-        if file_dialog.exec():
-            files = file_dialog.selectedFiles()
-            for file in files:
-                basename = os.path.basename(file)
-                destination = os.path.join(self.reference_dir, basename)
-                if os.path.exists(destination):
-                    destination = os.path.join(self.reference_dir, f"{uuid.uuid4().hex}_{basename}")
-                try:
-                    shutil.copy(file, destination)
-                except Exception as e:
-                    print(f"Error copying file {file} to {destination}: {e}")
-            self.refresh_reference_list()
-
-    def delete_selected_reference_images(self):
-        selected_items = self.reference_list_widget.selectedItems()
-        for item in selected_items:
-            file_path = item.data(Qt.ItemDataRole.UserRole)
-            try:
-                os.remove(file_path)
-            except Exception as e:
-                print(f"Failed to delete {file_path}: {e}")
-        self.refresh_reference_list()
-
     def toggle_detection_action(self):
-        self.detection_enabled = not self.detection_enabled
-        if self.detection_enabled:
-            self.detection_toggle_button.setText("Detection: ON")
-            if hasattr(self.view, 'detection_cv_image') and self.view.detection_cv_image is not None:
+        """
+        Toggles detection on/off. When turning detection ON, we reinitialize
+        self.view.detection_cv_image from self.view.current_cv_image if needed.
+        """
+        # Optional: Stop timers to avoid concurrency while toggling
+        # self.detection_timer.stop()
+        # self.score_timer.stop()
+
+        if self.action_in_progress:
+            return
+        self.action_in_progress = True
+
+        try:
+            self.detection_enabled = not self.detection_enabled
+
+            if self.detection_enabled:
+                self.detection_toggle_button.setText("Detection: ON")
+                # If detection_cv_image is None, re-init it from current_cv_image
+                if self.view.detection_cv_image is None and self.view.current_cv_image is not None:
+                    self.view.detection_cv_image = self.view.current_cv_image.copy()
+
+                # Immediately run detection once
                 self.update_detection()
-        else:
-            self.detection_toggle_button.setText("Detection: OFF")
-            if hasattr(self.view, 'detection_overlay_item') and self.view.detection_overlay_item is not None:
-                self.view.scene.removeItem(self.view.detection_overlay_item)
-                self.view.detection_overlay_item = None
+
+            else:
+                self.detection_toggle_button.setText("Detection: OFF")
+
+                # Remove any existing overlay
+                if hasattr(self.view, 'detection_overlay_item') and self.view.detection_overlay_item is not None:
+                    self.view.scene.removeItem(self.view.detection_overlay_item)
+                    self.view.detection_overlay_item = None
+
+                # Clear detection_cv_image so detection won't run
+                self.view.detection_cv_image = None
+
+        finally:
+            self.action_in_progress = False
+
+        # Optional: Restart timers if you stopped them above
+        # self.detection_timer.start(1000)
+        # self.score_timer.start(100)
 
     def update_detection(self):
+        """
+        Updates the detection overlay using self.view.detection_cv_image.
+        Includes safety checks to prevent crashes if data is missing.
+        """
+        # If detection isn't enabled, do nothing
+        if not self.detection_enabled:
+            return
+
+        # Make sure detection_cv_image is valid
         if not hasattr(self.view, 'detection_cv_image') or self.view.detection_cv_image is None:
             return
 
+        # Also ensure the background pixmap item exists
+        if not hasattr(self.view, 'background_pixmap_item') or self.view.background_pixmap_item is None:
+            return
+
         frame = self.view.detection_cv_image.copy()
-        height, width = frame.shape[:2]
+        if frame.size == 0:
+            # If frame is empty, skip
+            return
+
+        # If frame has alpha channel, separate it
         has_alpha = (frame.ndim == 3 and frame.shape[2] == 4)
         alpha_channel = frame[:, :, 3] if has_alpha else None
         if has_alpha:
+            # Convert BGRA -> BGR
             frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
         try:
+            # Run detection
             objects = detect_objects(frame, alpha_channel)
+
             if not objects:
+                # If no objects, remove overlay if present
                 if hasattr(self.view, 'detection_overlay_item') and self.view.detection_overlay_item is not None:
                     self.view.scene.removeItem(self.view.detection_overlay_item)
                     self.view.detection_overlay_item = None
                 return
 
+            # Group objects & pick focus
             grouped_clusters = group_objects(objects)
             focus_group = select_focus_object(grouped_clusters, frame.shape)
+
+            # Prepare overlay
+            height, width = frame.shape[:2]
             overlay = np.zeros((height, width, 4), dtype=np.uint8)
+
             if focus_group is not None:
+                # Colors
                 blue = (0, 0, 255, 255)
                 red = (255, 0, 0, 255)
                 scale_factor = 0.95
+
+                # Draw bounding boxes
                 for member in focus_group.get("members", []):
                     bx1, by1, bx2, by2 = member["bbox"]
+
+                    # Clamp to valid image coords
+                    bx1 = max(0, int(bx1))
+                    by1 = max(0, int(by1))
+                    bx2 = min(width, int(bx2))
+                    by2 = min(height, int(by2))
+
+                    # Scale the box slightly
                     box_width = bx2 - bx1
                     box_height = by2 - by1
                     new_width = int(box_width * scale_factor)
@@ -589,45 +649,78 @@ class MainWindow(QMainWindow):
                     new_by1 = center_y - new_height // 2
                     new_bx2 = new_bx1 + new_width
                     new_by2 = new_by1 + new_height
+
+                    # Draw box
                     cv2.rectangle(overlay, (new_bx1, new_by1), (new_bx2, new_by2), blue, thickness=2)
+
+                    # Label
                     label = member.get("label", "object")
                     confidence = member.get("confidence", 0)
                     debug_text = f"{label} {confidence:.2f}"
                     cv2.putText(overlay, debug_text, (new_bx1, new_by1 - 5),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, blue, 1, cv2.LINE_AA)
+
+                # Outer bounding box
                 x1, y1, x2, y2 = focus_group["bbox"]
+                x1 = max(0, int(x1))
+                y1 = max(0, int(y1))
+                x2 = min(width, int(x2))
+                y2 = min(height, int(y2))
                 cv2.rectangle(overlay, (x1, y1), (x2, y2), red, thickness=3)
 
+            # Convert overlay to QPixmap
             q_image = QImage(overlay.data, width, height, width * 4, QImage.Format.Format_RGBA8888)
             overlay_pixmap = QPixmap.fromImage(q_image)
+
+            # If we already have an overlay item, update it
             if hasattr(self.view, 'detection_overlay_item') and self.view.detection_overlay_item is not None:
                 self.view.detection_overlay_item.setPixmap(overlay_pixmap)
             else:
+                # Otherwise, create a new overlay item
                 self.view.detection_overlay_item = QGraphicsPixmapItem(overlay_pixmap)
                 self.view.detection_overlay_item.setZValue(20)
                 self.view.detection_overlay_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
                 self.view.scene.addItem(self.view.detection_overlay_item)
+
+            # Position overlay
+            if hasattr(self.view, 'background_pixmap_item') and self.view.background_pixmap_item is not None:
                 self.view.detection_overlay_item.setPos(self.view.background_pixmap_item.pos())
 
         except Exception as e:
             QMessageBox.critical(self, "Detection Error", f"An error occurred during detection:\n{str(e)}")
 
+    def safe_update_detection(self):
+        if self.detection_enabled and not self.action_in_progress:
+            self.update_detection()
+
+    def safe_update_score(self):
+        if not self.action_in_progress:
+            self.update_score()
+
     def update_score(self):
         try:
-            if self.view.current_cv_image is None or len(self.view.current_cv_image.shape) < 3:
-                self.score_label.setText(
-                    "Aesthetic Score: N/A | Position: N/A | Angle: N/A | Lighting: N/A | Focus: N/A")
+            if self.view.detection_cv_image is not None:
+                frame = self.view.detection_cv_image
+            else:
+                frame = self.view.current_cv_image
+
+            if frame is None or len(frame.shape) < 3:
+                self.score_label.setText("Aesthetic Score: N/A | Position: N/A | Angle: N/A | Lighting: N/A | Focus: N/A")
                 return
 
-            frame = self.view.current_cv_image
-            objects = detect_objects(frame)
+            if frame.shape[2] == 4:
+                frame_for_score = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+            else:
+                frame_for_score = frame
+
+            objects = detect_objects(frame_for_score)
             if objects:
                 grouped_clusters = group_objects(objects)
-                focus_object = select_focus_object(grouped_clusters, frame.shape)
+                focus_object = select_focus_object(grouped_clusters, frame_for_score.shape)
             else:
                 focus_object = None
 
-            score_data = calculate_photo_score(frame, [focus_object] if focus_object else [])
+            score_data = calculate_photo_score(frame_for_score, [focus_object] if focus_object else [])
             new_text = (
                 f"Aesthetic Score: {score_data['Final Score']} | "
                 f"Position: {score_data['Position']} | "
@@ -641,49 +734,37 @@ class MainWindow(QMainWindow):
             self.score_label.setText("Aesthetic Score: N/A | Position: N/A | Angle: N/A | Lighting: N/A | Focus: N/A")
 
     def updateLightingPreview(self):
-        # Ensure a base image exists
         if not hasattr(self.view, 'detection_cv_image') or self.view.detection_cv_image is None:
             return
-
         brightness = self.lighting_brightness_slider.value() / 100.0
         contrast = self.lighting_contrast_slider.value() / 100.0
         gamma = self.lighting_gamma_slider.value() / 100.0
 
-        # Start with the unmodified base image and compute the preview
         image = self.view.detection_cv_image.astype(np.float32) / 255.0
-        # Apply gamma correction
         image = np.power(image, 1.0 / gamma)
-        # Scale brightness and contrast
         image = np.clip(image * contrast * brightness, 0, 1)
         preview = (image * 255).astype(np.uint8)
-
-        # Update the current working image (preview only)
         self.view.current_cv_image = preview
         self.view._update_cv_image_conversions()
-
-        # Update the QPixmap to show preview
-        h, w, ch = self.view.cv_image_rgba.shape
+        h, w, ch = self.view.display_cv_image.shape
         bytes_per_line = ch * w
-        qimage = QImage(self.view.cv_image_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
+        qimage = QImage(self.view.display_cv_image.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
         pixmap = QPixmap.fromImage(qimage)
         self.view.background_pixmap_item.setPixmap(pixmap)
 
     def updateSharpenPreview(self):
         if not hasattr(self.view, 'detection_cv_image') or self.view.detection_cv_image is None:
             return
-
         sharpen_amount = self.sharpen_slider.value() / 10.0
         image = self.view.detection_cv_image.astype(np.float32)
         blurred = cv2.GaussianBlur(image, (0, 0), sigmaX=3)
         sharpened = cv2.addWeighted(image, 1 + sharpen_amount, blurred, -sharpen_amount, 0)
         sharpened = np.clip(sharpened, 0, 255).astype(np.uint8)
-
         self.view.current_cv_image = sharpened
         self.view._update_cv_image_conversions()
-
-        h, w, ch = self.view.cv_image_rgba.shape
+        h, w, ch = self.view.display_cv_image.shape
         bytes_per_line = ch * w
-        qimage = QImage(self.view.cv_image_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
+        qimage = QImage(self.view.display_cv_image.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
         pixmap = QPixmap.fromImage(qimage)
         self.view.background_pixmap_item.setPixmap(pixmap)
 
@@ -691,23 +772,18 @@ class MainWindow(QMainWindow):
         if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             QMessageBox.warning(self, "Enhance Lighting", "No image loaded for enhancement.")
             return
-        # Commit the preview effect by updating the base image.
-        self.view.detection_cv_image = self.view.current_cv_image.copy()
         QMessageBox.information(self, "Enhance Lighting", "Lighting enhancement applied.")
 
     def apply_filter_action(self):
         if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             QMessageBox.warning(self, "Apply Filter", "No filter preview available.")
             return
-        # Commit the preview effect by updating the base image permanently.
-        self.view.detection_cv_image = self.view.current_cv_image.copy()
         QMessageBox.information(self, "Apply Filter", "Filter applied.")
 
     def sharpen_image_action(self):
         if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             QMessageBox.warning(self, "Sharpen Image", "No image loaded for sharpening.")
             return
-        self.view.detection_cv_image = self.view.current_cv_image.copy()
         QMessageBox.information(self, "Sharpen Image", "Image sharpening applied.")
 
     def upscale_image_action(self):
@@ -716,81 +792,72 @@ class MainWindow(QMainWindow):
             return
         try:
             current_image = self.view.current_cv_image.copy()
-
-            # Check if image has an alpha channel (transparency)
             if current_image.shape[2] == 4:
-                # Separate RGB and alpha channels
                 rgb_image = current_image[:, :, :3]
                 alpha_channel = current_image[:, :, 3]
-
-                # Upscale RGB using RealESRGAN
                 upscaled_rgb = RealESRGANProvider.upscale(rgb_image)
-
-                # Upscale alpha channel using cv2.resize (or any interpolation you prefer)
                 new_size = (upscaled_rgb.shape[1], upscaled_rgb.shape[0])
                 upscaled_alpha = cv2.resize(alpha_channel, new_size, interpolation=cv2.INTER_LINEAR)
-
-                # Merge upscaled RGB and alpha channels
                 upscaled_image = np.dstack((upscaled_rgb, upscaled_alpha))
             else:
                 upscaled_image = RealESRGANProvider.upscale(current_image)
-
             self.view.current_cv_image = upscaled_image
-            self.view.detection_cv_image = upscaled_image.copy()
             self.view._update_cv_image_conversions()
-
-            h, w, ch = self.view.cv_image_rgba.shape
+            h, w, ch = self.view.display_cv_image.shape
             bytes_per_line = ch * w
-            qimage = QImage(self.view.cv_image_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
+            qimage = QImage(self.view.display_cv_image.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
             pixmap = QPixmap.fromImage(qimage)
             self.view.background_pixmap_item.setPixmap(pixmap)
             self.view.setSceneRect(self.view.background_pixmap_item.boundingRect())
             self.view.fitInView(self.view.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
-
             QMessageBox.information(self, "4k Resolution", "Image successfully upscaled.")
             RealESRGANProvider._instance = None
             torch.cuda.empty_cache()
             print("RealESRGAN resources cleaned up.")
+            if self.detection_enabled:
+                self.update_detection()
         except Exception as e:
             QMessageBox.critical(self, "Upscale Error", f"An error occurred during upscaling: {str(e)}")
 
     def u2net_auto_action(self):
-        if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
-            QMessageBox.warning(self, "Auto Salient Object", "No image loaded.")
+        if self.action_in_progress:
             return
+        self.action_in_progress = True
         try:
-            # Using the U2Net threshold value from the configuration (default now 0.3)
+            if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
+                QMessageBox.warning(self, "Auto Salient Object", "No image loaded.")
+                return
             threshold_value = self.u2net_threshold_spin.value()
-            mask = U2NetProvider.get_salient_mask(self.view.current_cv_image, threshold=threshold_value)
+            img_for_u2net = self.view.current_cv_image
+            if img_for_u2net.shape[2] == 4:
+                img_for_u2net = cv2.cvtColor(img_for_u2net, cv2.COLOR_BGRA2BGR)
+            mask = U2NetProvider.get_salient_mask(img_for_u2net, threshold=threshold_value)
             self.view.u2net_selection_mask = mask
-            self.view.update_u2net_selection_display()
+            self.view._update_cv_image_conversions()
+            self.view.update_display()
             QMessageBox.information(self, "Auto Salient Object", "Salient object segmentation completed.")
             U2NetProvider._session = None
             torch.cuda.empty_cache()
             print("U2NET resources cleaned up.")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"An error occurred:\n{str(e)}")
+        finally:
+            self.action_in_progress = False
 
     def apply_action(self):
-        # Temporarily disable the score callback to avoid it firing during merge
         saved_callback = self.view.score_update_callback
         self.view.score_update_callback = None
-
         self.view.apply_merge()
-        self.view.detection_cv_image = self.view.current_cv_image.copy()
-
         if self.detection_enabled:
             self.update_detection()
-
-        # Re-enable the callback after merge is complete
-        self.view.score_update_callback = self.update_score
+        self.view.score_update_callback = saved_callback
 
     def set_mode_action(self, mode: str):
         self.view.set_mode(mode)
         self.update_active_button(mode)
         if mode != "object selection" and (SAMModelProvider._model is not None or
-                                    SAMModelProvider._predictor is not None or
-                                    SAMModelProvider._auto_mask_generator is not None):
+                                           SAMModelProvider._predictor is not None or
+                                           SAMModelProvider._auto_mask_generator is not None):
             SAMModelProvider._model = None
             SAMModelProvider._predictor = None
             SAMModelProvider._auto_mask_generator = None
@@ -807,42 +874,53 @@ class MainWindow(QMainWindow):
             return
         try:
             cv_img = self.view.current_cv_image
-            if len(cv_img.shape) == 3:
-                if cv_img.shape[2] == 3:
-                    rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
-                    pil_image = Image.fromarray(rgb_image).convert("RGBA")
-                elif cv_img.shape[2] == 4:
-                    rgba_image = cv2.cvtColor(cv_img, cv2.COLOR_BGRA2RGBA)
-                    pil_image = Image.fromarray(rgba_image)
-                else:
-                    QMessageBox.warning(self, "Lama Inpaint", "Unsupported image format.")
-                    return
+
+            # Convert to PIL RGBA
+            if cv_img.shape[2] == 3:
+                pil_image = Image.fromarray(cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)).convert("RGBA")
+            elif cv_img.shape[2] == 4:
+                pil_image = Image.fromarray(cv2.cvtColor(cv_img, cv2.COLOR_BGRA2RGBA))
             else:
                 QMessageBox.warning(self, "Lama Inpaint", "Unsupported image format.")
                 return
 
+            # Ensure we have RGBA
             if pil_image.mode != "RGBA":
-                QMessageBox.warning(self, "Lama Inpaint", "Image does not have an alpha channel. Please provide an image with transparency.")
+                QMessageBox.warning(self, "Lama Inpaint", "Please provide an image with transparency (RGBA).")
                 return
 
-            alpha = pil_image.split()[3]
-            mask = ImageOps.invert(alpha.convert("L"))
+            # ============== DEBUG PRINT ==============
+            print("PIL RGBA size:", pil_image.size)  # e.g. (854, 1280)
 
+            # Extract alpha
+            alpha = pil_image.split()[3]  # alpha channel
+            w, h = pil_image.size
+
+            # If alpha is the wrong size, resize it
+            if alpha.size != (w, h):
+                print("Resizing alpha from", alpha.size, "to", (w, h))
+                alpha = alpha.resize((w, h), Image.Resampling.LANCZOS)
+
+            # Convert alpha to mask
+            mask = ImageOps.invert(alpha.convert("L"))
+            print("Mask size:", mask.size)
+
+            # Inpaint
             simple_lama = SimpleLama()
             result = simple_lama(pil_image.convert("RGB"), mask)
 
+            # Show result
             qimage = ImageQt(result)
             pixmap = QPixmap.fromImage(qimage)
             self.view.background_pixmap_item.setPixmap(pixmap)
-            self.view.current_background_pixmap = pixmap
-
             result_np = cv2.cvtColor(np.array(result), cv2.COLOR_RGB2BGR)
             self.view.current_cv_image = result_np
-            self.view.detection_cv_image = self.view.current_cv_image.copy()
-
             self.view._update_cv_image_conversions()
 
             QMessageBox.information(self, "Lama Inpaint", "Lama inpainting completed.")
+
+            if self.detection_enabled:
+                self.update_detection()
 
         except Exception as e:
             QMessageBox.critical(self, "Lama Inpaint Error", f"An error occurred during inpainting:\n{str(e)}")
@@ -851,7 +929,6 @@ class MainWindow(QMainWindow):
         if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             QMessageBox.warning(self, "Control Net", "No image loaded for processing.")
             return
-
         cv_img = self.view.current_cv_image
         if len(cv_img.shape) == 3:
             if cv_img.shape[2] == 3:
@@ -866,14 +943,12 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "Control Net", "Unsupported image format.")
             return
-
         pil_image_rgba = pil_image.convert("RGBA")
         original_size = pil_image_rgba.size
         alpha = pil_image_rgba.split()[3]
         mask = alpha.point(lambda p: 255 if p < 128 else 0).convert("L")
         pil_image_rgb = pil_image_rgba.convert("RGB")
         adjusted_size = make_divisible_by_8(original_size)
-
         reference_images = []
         for img_path in glob.glob(os.path.join(self.reference_dir, "*.*")):
             try:
@@ -881,12 +956,10 @@ class MainWindow(QMainWindow):
                 reference_images.append(ref_img)
             except Exception as e:
                 print(f"Error loading reference image {img_path}: {e}")
-
         prompt = self.prompt_field.toPlainText().strip()
         if not prompt:
             QMessageBox.warning(self, "Control Net", "Please enter a prompt for inpainting.")
             return
-
         pipe = load_controlnet()
         try:
             result = pipe(
@@ -897,27 +970,21 @@ class MainWindow(QMainWindow):
                 height=adjusted_size[1],
                 width=adjusted_size[0]
             ).images[0]
-
             result = result.resize(original_size, Image.Resampling.LANCZOS)
             qimage = ImageQt(result)
             pixmap = QPixmap.fromImage(qimage)
             self.view.background_pixmap_item.setPixmap(pixmap)
-            self.view.current_background_pixmap = pixmap
-
             result_np = cv2.cvtColor(np.array(result), cv2.COLOR_RGB2BGR)
             self.view.current_cv_image = result_np
-            self.view.detection_cv_image = self.view.current_cv_image.copy()
-
             QMessageBox.information(self, "Control Net", "Control Net processing completed.")
             del pipe
             torch.cuda.empty_cache()
             print("ControlNet resources cleaned up.")
-
             if self.detection_enabled:
                 self.update_detection()
-
         except Exception as e:
             QMessageBox.critical(self, "Control Net Error", f"An error occurred: {str(e)}")
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
