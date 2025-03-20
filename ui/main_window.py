@@ -51,7 +51,7 @@ class MainWindow(QMainWindow):
         self.detection_timer.start(1000)  # every 1 second
         self.score_timer = QTimer(self)
         self.score_timer.timeout.connect(self.safe_update_score)
-        self.score_timer.start(100)  # every 100 ms
+        self.score_timer.start(1000)  # every 1 second
 
     def initUI(self):
         self.setWindowTitle("Image Editor")
@@ -734,17 +734,19 @@ class MainWindow(QMainWindow):
             self.score_label.setText("Aesthetic Score: N/A | Position: N/A | Angle: N/A | Lighting: N/A | Focus: N/A")
 
     def updateLightingPreview(self):
-        if not hasattr(self.view, 'detection_cv_image') or self.view.detection_cv_image is None:
+        if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             return
         brightness = self.lighting_brightness_slider.value() / 100.0
         contrast = self.lighting_contrast_slider.value() / 100.0
         gamma = self.lighting_gamma_slider.value() / 100.0
 
-        image = self.view.detection_cv_image.astype(np.float32) / 255.0
+        image = self.view.current_cv_image.astype(np.float32) / 255.0
         image = np.power(image, 1.0 / gamma)
         image = np.clip(image * contrast * brightness, 0, 1)
         preview = (image * 255).astype(np.uint8)
         self.view.current_cv_image = preview
+
+
         self.view._update_cv_image_conversions()
         h, w, ch = self.view.display_cv_image.shape
         bytes_per_line = ch * w
@@ -753,14 +755,17 @@ class MainWindow(QMainWindow):
         self.view.background_pixmap_item.setPixmap(pixmap)
 
     def updateSharpenPreview(self):
-        if not hasattr(self.view, 'detection_cv_image') or self.view.detection_cv_image is None:
+        if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             return
         sharpen_amount = self.sharpen_slider.value() / 10.0
-        image = self.view.detection_cv_image.astype(np.float32)
+        image = self.view.current_cv_image.astype(np.float32)
         blurred = cv2.GaussianBlur(image, (0, 0), sigmaX=3)
         sharpened = cv2.addWeighted(image, 1 + sharpen_amount, blurred, -sharpen_amount, 0)
         sharpened = np.clip(sharpened, 0, 255).astype(np.uint8)
         self.view.current_cv_image = sharpened
+
+
+
         self.view._update_cv_image_conversions()
         h, w, ch = self.view.display_cv_image.shape
         bytes_per_line = ch * w

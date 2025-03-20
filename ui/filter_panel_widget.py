@@ -153,12 +153,11 @@ class FilterPanelWidget(QWidget):
         if not filterFunction:
             return
 
-        # Instead of using self.original_image, use the current base image from the view.
-        if not hasattr(self.view, 'detection_cv_image') or self.view.detection_cv_image is None:
+        if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             return
 
         # Convert the current detection_cv_image (assumed to be in BGR or BGRA) to a PIL image.
-        cv_img = self.view.detection_cv_image
+        cv_img = self.view.current_cv_image
         if cv_img.ndim < 3:
             # If image is grayscale, convert to RGB.
             pil_img = Image.fromarray(cv_img).convert("RGB")
