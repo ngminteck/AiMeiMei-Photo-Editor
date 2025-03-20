@@ -474,6 +474,7 @@ class MainWindow(QMainWindow):
             self.filter_panel.refresh_thumbnails()
             if self.detection_enabled:
                 self.update_detection()
+            self.update_score()
 
     def save_image(self):
         if self.current_file:
@@ -799,7 +800,8 @@ class MainWindow(QMainWindow):
             torch.cuda.empty_cache()
             print("RealESRGAN resources cleaned up.")
             if self.detection_enabled:
-                self.update_detection()
+                self.toggle_detection_action()
+                self.toggle_detection_action()
         except Exception as e:
             QMessageBox.critical(self, "Upscale Error", f"An error occurred during upscaling: {str(e)}")
 
@@ -908,7 +910,8 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Lama Inpaint", "Lama inpainting completed.")
 
             if self.detection_enabled:
-                self.update_detection()
+                self.toggle_detection_action()
+                self.toggle_detection_action()
 
         except Exception as e:
             QMessageBox.critical(self, "Lama Inpaint Error", f"An error occurred during inpainting:\n{str(e)}")
@@ -969,7 +972,8 @@ class MainWindow(QMainWindow):
             torch.cuda.empty_cache()
             print("ControlNet resources cleaned up.")
             if self.detection_enabled:
-                self.update_detection()
+                self.toggle_detection_action()
+                self.toggle_detection_action()
         except Exception as e:
             QMessageBox.critical(self, "Control Net Error", f"An error occurred: {str(e)}")
 
