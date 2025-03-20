@@ -16,7 +16,7 @@ def compute_iou(box1, box2):
     union_area = box1_area + box2_area - inter_area
     return inter_area / union_area if union_area else 0
 
-def are_close(box1, box2, distance_threshold=30000, iou_threshold=0.2):
+def are_close(box1, box2, distance_threshold=20000, iou_threshold=0.2):
     # Compute center points
     x1, y1, x2, y2 = box1
     bx1, by1, bx2, by2 = box2
@@ -129,7 +129,7 @@ def draw_bounding_box(frame, group):
 
     blue = (255, 0, 0)  # For individual boxes
     red = (0, 0, 255)   # For the grouped focus box
-    scale_factor = 0.95  # Scale down for individual boxes
+    scale_factor = 0.99  # Scale down for individual boxes
 
     for member in group.get("members", []):
         bx1, by1, bx2, by2 = member["bbox"]

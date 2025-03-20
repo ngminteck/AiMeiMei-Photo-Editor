@@ -71,21 +71,37 @@ class CustomGraphicsView(QGraphicsView):
     def update_all_cv_image_conversions(self):
         if self.current_cv_image is None or len(self.current_cv_image.shape) < 3:
             return
-        self.image_shape = (self.current_cv_image.shape[0], self.current_cv_image.shape[1])
+
+        # Update the internal "image_shape" to match the new image
+        new_h, new_w = self.current_cv_image.shape[:2]
+        self.image_shape = (new_h, new_w)
+
+        # Convert current_cv_image to RGBA for display
         if self.current_cv_image.shape[2] == 4:
             self.display_cv_image = cv2.cvtColor(self.current_cv_image, cv2.COLOR_BGRA2RGBA)
         else:
             self.display_cv_image = cv2.cvtColor(self.current_cv_image, cv2.COLOR_BGR2RGBA)
 
+        # Update sam_cv_image for the SAM predictor
         self.sam_cv_image = self.apply_contrast_and_sharpen(self.current_cv_image)
         if self.current_cv_image.shape[2] == 4:
             self.sam_cv_image_rgb = cv2.cvtColor(self.sam_cv_image, cv2.COLOR_BGRA2RGB)
         else:
             self.sam_cv_image_rgb = cv2.cvtColor(self.sam_cv_image, cv2.COLOR_BGR2RGB)
 
+        # --- Resize the selection mask if the image size has changed ---
+        if self.selection_mask is not None:
+            mask_h, mask_w = self.selection_mask.shape[:2]
+            if (mask_h, mask_w) != (new_h, new_w):
+                # Use nearest-neighbor to preserve sharp edges
+                self.selection_mask = cv2.resize(
+                    self.selection_mask,
+                    (new_w, new_h),
+                    interpolation=cv2.INTER_NEAREST
+                )
+
         # Update the detection composite whenever conversions update
         self.update_detection_composite()
-        # Removed callback call for score update
 
     def drawBackground(self, painter, rect):
         if self.background_pixmap_item:

@@ -48,10 +48,10 @@ class MainWindow(QMainWindow):
         # Separate timers:
         self.detection_timer = QTimer(self)
         self.detection_timer.timeout.connect(self.safe_update_detection)
-        self.detection_timer.start(1000)  # every 1 second
+        self.detection_timer.start(30000)  # every 30 second
         self.score_timer = QTimer(self)
         self.score_timer.timeout.connect(self.safe_update_score)
-        self.score_timer.start(1000)  # every 1 second
+        self.score_timer.start(30000)  # every 30 second
 
     def initUI(self):
         self.setWindowTitle("Image Editor")
@@ -177,7 +177,7 @@ class MainWindow(QMainWindow):
         self.lighting_brightness_spin.setValue(100)
         self.lighting_brightness_slider.valueChanged.connect(self.lighting_brightness_spin.setValue)
         self.lighting_brightness_spin.valueChanged.connect(self.lighting_brightness_slider.setValue)
-        self.lighting_brightness_slider.valueChanged.connect(self.updateLightingPreview)
+        self.lighting_brightness_slider.valueChanged.connect(self.update_lighting)
         brightness_layout.addWidget(brightness_label)
         brightness_layout.addWidget(self.lighting_brightness_slider)
         brightness_layout.addWidget(self.lighting_brightness_spin)
@@ -193,7 +193,7 @@ class MainWindow(QMainWindow):
         self.lighting_contrast_spin.setValue(100)
         self.lighting_contrast_slider.valueChanged.connect(self.lighting_contrast_spin.setValue)
         self.lighting_contrast_spin.valueChanged.connect(self.lighting_contrast_slider.setValue)
-        self.lighting_contrast_slider.valueChanged.connect(self.updateLightingPreview)
+        self.lighting_contrast_slider.valueChanged.connect(self.update_lighting)
         contrast_layout.addWidget(contrast_label)
         contrast_layout.addWidget(self.lighting_contrast_slider)
         contrast_layout.addWidget(self.lighting_contrast_spin)
@@ -209,7 +209,7 @@ class MainWindow(QMainWindow):
         self.lighting_gamma_spin.setValue(100)
         self.lighting_gamma_slider.valueChanged.connect(self.lighting_gamma_spin.setValue)
         self.lighting_gamma_spin.valueChanged.connect(self.lighting_gamma_slider.setValue)
-        self.lighting_gamma_slider.valueChanged.connect(self.updateLightingPreview)
+        self.lighting_gamma_slider.valueChanged.connect(self.update_lighting)
         gamma_layout.addWidget(gamma_label)
         gamma_layout.addWidget(self.lighting_gamma_slider)
         gamma_layout.addWidget(self.lighting_gamma_spin)
@@ -230,7 +230,7 @@ class MainWindow(QMainWindow):
         self.sharpen_spin.setValue(10)
         self.sharpen_slider.valueChanged.connect(self.sharpen_spin.setValue)
         self.sharpen_spin.valueChanged.connect(self.sharpen_slider.setValue)
-        self.sharpen_slider.valueChanged.connect(self.updateSharpenPreview)
+        self.sharpen_slider.valueChanged.connect(self.update_sharpen)
         sharpen_control_layout.addWidget(sharpen_label)
         sharpen_control_layout.addWidget(self.sharpen_slider)
         sharpen_control_layout.addWidget(self.sharpen_spin)
@@ -612,7 +612,7 @@ class MainWindow(QMainWindow):
                 # Colors
                 blue = (0, 0, 255, 255)
                 red = (255, 0, 0, 255)
-                scale_factor = 0.95
+                scale_factor = 0.99
 
                 # Draw bounding boxes
                 for member in focus_group.get("members", []):
@@ -719,7 +719,7 @@ class MainWindow(QMainWindow):
             print("Error in update_score:", e)
             self.score_label.setText("Aesthetic Score: N/A | Position: N/A | Angle: N/A | Lighting: N/A | Focus: N/A")
 
-    def updateLightingPreview(self):
+    def update_lighting(self):
         if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             return
 
@@ -744,7 +744,7 @@ class MainWindow(QMainWindow):
         pixmap = QPixmap.fromImage(qimage)
         self.view.background_pixmap_item.setPixmap(pixmap)
 
-    def updateSharpenPreview(self):
+    def update_sharpen(self):
         if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             return
 
